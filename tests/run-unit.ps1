@@ -265,6 +265,15 @@ Test-Case "trusted runner exits have distinct safety and infrastructure classes"
 }
 
 Test-Case "Gradle init starter includes wrapper redirect hosts" {
+    $requiredHosts = @('services.gradle.org', 'github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com')
+    if (-not $IsWindows) {
+        $definition = & $module { (Get-Command Initialize-AgentLocalCiRepository).ScriptBlock.ToString() }
+        foreach ($hostName in $requiredHosts) {
+            Assert-True ($definition.Contains('"' + $hostName + '"', [StringComparison]::Ordinal)) "Gradle starter omitted $hostName"
+        }
+        return
+    }
+
     $root = Join-Path ([IO.Path]::GetTempPath()) ("agentlocalci-init-gradle-" + [Guid]::NewGuid().ToString('N'))
     $temporaryHome = Join-Path ([IO.Path]::GetTempPath()) ("agentlocalci-init-home-" + [Guid]::NewGuid().ToString('N'))
     try {
@@ -272,7 +281,7 @@ Test-Case "Gradle init starter includes wrapper redirect hosts" {
         [IO.File]::WriteAllText((Join-Path $root 'gradlew'), '#!/usr/bin/env sh')
         [void](& $module { param($h,$r) Initialize-AgentLocalCiRepository $h $r $null } $temporaryHome $root)
         $pipeline = Get-Content -LiteralPath (Join-Path $root '.agentlocalci\pipeline.yml') -Raw -Encoding UTF8 | ConvertFrom-Json -Depth 50
-        foreach ($hostName in @('services.gradle.org', 'github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com')) {
+        foreach ($hostName in $requiredHosts) {
             Assert-True (@($pipeline.dependency_hosts) -ccontains $hostName) "Gradle starter omitted $hostName"
         }
     }
