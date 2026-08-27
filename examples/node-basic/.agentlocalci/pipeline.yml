@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "project": { "name": "node-basic" },
+  "default_profile": "standard",
+  "dependency_hosts": ["registry.npmjs.org"],
+  "environment": { "NODE_ENV": "test" },
+  "dependencies": { "npm": { "working_directory": ".", "lockfile": "package-lock.json" } },
+  "profiles": {
+    "standard": {
+      "description": "npm test and build using a prepared cache with offline validation",
+      "acceptance": true,
+      "gaps": ["Browser farms, external services, deployment, and package publication are outside this profile."],
+      "stages": [
+        { "id": "test", "command": ["npm", "test"], "working_directory": ".", "needs": ["npm"], "timeout_seconds": 1800 },
+        { "id": "build", "command": ["npm", "run", "build"], "working_directory": ".", "needs": ["npm"], "timeout_seconds": 1800 }
+      ]
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "AgentLocalCI",
+  "version": "0.1.0-alpha.1",
+  "schema_version": 1,
+  "platform_status": {
+    "windows": "supported",
+    "linux": "planned",
+    "macos": "planned"
+  },
+  "controller": "PowerShell 7",
+  "executor": "Docker Desktop Linux containers"
+}

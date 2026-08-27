@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "project": { "name": "android-gradle-example" },
+  "default_profile": "standard",
+  "dependency_hosts": ["dl.google.com", "downloads.gradle.org", "github.com", "github-releases.githubusercontent.com", "maven.google.com", "objects.githubusercontent.com", "plugins-artifacts.gradle.org", "plugins.gradle.org", "release-assets.githubusercontent.com", "repo.maven.apache.org", "services.gradle.org"],
+  "environment": {},
+  "dependencies": { "gradle": { "working_directory": ".", "wrapper": "gradlew" } },
+  "profiles": {
+    "standard": {
+      "description": "Gradle wrapper check using a prepared cache and offline validation",
+      "acceptance": true,
+      "gaps": ["Emulators, physical devices, signing, Play publishing, hosted services, and deployment are outside this profile."],
+      "stages": [
+        { "id": "gradle-check", "command": ["./gradlew", "check"], "working_directory": ".", "needs": ["gradle"], "timeout_seconds": 1800 }
+      ]
+    }
+  }
+}

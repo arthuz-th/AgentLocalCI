@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "project": { "name": "nextjs-example" },
+  "default_profile": "standard",
+  "dependency_hosts": ["registry.npmjs.org"],
+  "environment": { "NODE_ENV": "test" },
+  "dependencies": { "npm": { "working_directory": ".", "lockfile": "package-lock.json" } },
+  "profiles": {
+    "standard": {
+      "description": "Next.js lint, test, and production build in offline validation containers",
+      "acceptance": true,
+      "gaps": ["External APIs, browsers, deployment, and production smoke tests are outside this profile."],
+      "stages": [
+        { "id": "lint", "command": ["npm", "run", "lint"], "working_directory": ".", "needs": ["npm"], "timeout_seconds": 1800 },
+        { "id": "test", "command": ["npm", "test"], "working_directory": ".", "needs": ["npm"], "timeout_seconds": 1800 },
+        { "id": "build", "command": ["npm", "run", "build"], "working_directory": ".", "needs": ["npm"], "timeout_seconds": 1800 }
+      ]
+    }
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "project": { "name": "AgentLocalCI" },
+  "default_profile": "standard",
+  "dependency_hosts": [],
+  "environment": {},
+  "dependencies": {},
+  "profiles": {
+    "fast": {
+      "description": "Fast parser and unit feedback; not release evidence",
+      "acceptance": false,
+      "gaps": ["Docker fault injection, installer checks, SBOM generation, and full-history scanning are omitted."],
+      "stages": [
+        {
+          "id": "unit",
+          "command": ["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-File", "tests/run-unit.ps1"],
+          "working_directory": ".",
+          "needs": [],
+          "timeout_seconds": 900
+        }
+      ]
+    },
+    "standard": {
+      "description": "Exact-tree unit, syntax, schema, documentation, and public-source safety gate",
+      "acceptance": true,
+      "gaps": ["Host-level Docker fault injection, symbolic-link adversarial tests, installer isolation, dependency egress tests, release SBOM, and GitHub publication settings are verified separately by the maintainer."],
+      "stages": [
+        {
+          "id": "unit",
+          "command": ["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-File", "tests/run-unit.ps1"],
+          "working_directory": ".",
+          "needs": [],
+          "timeout_seconds": 900
+        },
+        {
+          "id": "quality",
+          "command": ["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-File", "scripts/run-quality.ps1"],
+          "working_directory": ".",
+          "needs": [],
+          "timeout_seconds": 900
+        }
+      ]
+    }
+  }
+}

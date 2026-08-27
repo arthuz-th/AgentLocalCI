@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/arthuz-th/AgentLocalCI/raw/main/schemas/policy.schema.json",
+  "title": "AgentLocalCI machine policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "enabled", "executor", "max_parallel", "allow_host_executor", "allow_privileged", "allow_host_network", "allow_host_mounts", "allow_docker_socket", "allow_devices", "allow_custom_images", "allow_secrets", "allowed_environment_names", "allowed_dependency_hosts", "resources", "required_profiles", "required_stage_ids"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "enabled": { "type": "boolean" },
+    "executor": { "const": "docker" },
+    "max_parallel": { "const": 1 },
+    "allow_host_executor": { "const": false },
+    "allow_privileged": { "const": false },
+    "allow_host_network": { "const": false },
+    "allow_host_mounts": { "const": false },
+    "allow_docker_socket": { "const": false },
+    "allow_devices": { "const": false },
+    "allow_custom_images": { "const": false },
+    "allow_secrets": { "const": false },
+    "allowed_environment_names": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,63}$" } },
+    "allowed_dependency_hosts": { "type": "array", "uniqueItems": true, "items": { "type": "string", "maxLength": 253, "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])$" } },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cpu_limit", "memory_limit", "pids_limit", "stage_timeout_seconds", "run_timeout_seconds", "output_limit_mib", "minimum_free_disk_gib", "gradle_max_workers"],
+      "properties": {
+        "cpu_limit": { "type": "number", "minimum": 0.5, "maximum": 64 },
+        "memory_limit": { "type": "string", "pattern": "^[1-9][0-9]{0,3}(m|g)$" },
+        "pids_limit": { "type": "integer", "minimum": 64, "maximum": 8192 },
+        "stage_timeout_seconds": { "type": "integer", "minimum": 30, "maximum": 86400 },
+        "run_timeout_seconds": { "type": "integer", "minimum": 60, "maximum": 172800 },
+        "output_limit_mib": { "type": "integer", "minimum": 1, "maximum": 1024 },
+        "minimum_free_disk_gib": { "type": "integer", "minimum": 1, "maximum": 1024 },
+        "gradle_max_workers": { "type": "integer", "minimum": 1, "maximum": 16 }
+      }
+    },
+    "required_profiles": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/id" } },
+    "required_stage_ids": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/id" },
+      "additionalProperties": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/id" } }
+    }
+  },
+  "$defs": { "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" } }
+}

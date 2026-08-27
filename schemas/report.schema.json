@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/arthuz-th/AgentLocalCI/raw/main/schemas/report.schema.json",
+  "title": "AgentLocalCI run report",
+  "type": "object",
+  "required": ["schema_version", "tool", "run_id", "project", "target_sha", "target_tree", "profile", "result", "exit_code", "started_utc", "finished_utc", "duration_seconds", "stages", "provenance", "fingerprints", "image", "security", "cleanup", "error"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "tool": {
+      "type": "object",
+      "required": ["name", "version", "controller_identity"],
+      "properties": {
+        "name": { "const": "AgentLocalCI" },
+        "version": { "type": "string" },
+        "controller_identity": { "type": "string", "pattern": "^[0-9a-f]{20}$" }
+      }
+    },
+    "run_id": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{9}-[0-9a-f]{12}$" },
+    "project": { "type": "string", "maxLength": 81 },
+    "target_sha": { "$ref": "#/$defs/sha1" },
+    "target_tree": { "oneOf": [{ "$ref": "#/$defs/sha1" }, { "const": "" }] },
+    "profile": {
+      "type": "object",
+      "required": ["name", "acceptance", "description", "gaps"],
+      "properties": {
+        "name": { "type": "string" },
+        "acceptance": { "type": "boolean" },
+        "description": { "type": "string" },
+        "gaps": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "result": { "enum": ["Passed", "Failed", "InvalidConfiguration", "InfrastructureFailed", "SafetyBlocked", "CleanupFailed", "DiagnosticOnly", "Cancelled"] },
+    "exit_code": { "enum": [0, 1, 2, 3, 4, 5, 6, 130] },
+    "started_utc": { "type": "string", "format": "date-time" },
+    "finished_utc": { "type": "string", "format": "date-time" },
+    "duration_seconds": { "type": "number", "minimum": 0 },
+    "stages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "index", "status", "exit_code", "timed_out", "output_limit_exceeded", "started_utc", "finished_utc", "duration_seconds", "stdout_log", "stderr_log", "execution_boundary", "network", "exact_source"],
+        "properties": {
+          "id": { "type": "string" },
+          "index": { "type": "integer", "minimum": 1 },
+          "status": { "enum": ["Passed", "Failed", "TimedOut", "OutputLimitExceeded", "SafetyBlocked", "InfrastructureFailed"] },
+          "exit_code": { "type": "integer" },
+          "timed_out": { "type": "boolean" },
+          "output_limit_exceeded": { "type": "boolean" },
+          "started_utc": { "type": "string", "format": "date-time" },
+          "finished_utc": { "type": "string", "format": "date-time" },
+          "duration_seconds": { "type": "number", "minimum": 0 },
+          "stdout_log": { "type": "string" },
+          "stderr_log": { "type": "string" },
+          "execution_boundary": { "const": "unprivileged-linux-container" },
+          "network": { "const": "none" },
+          "exact_source": { "const": true }
+        }
+      }
+    },
+    "provenance": { "type": "object" },
+    "fingerprints": { "type": "object" },
+    "image": { "type": ["object", "null"] },
+    "security": { "type": "object" },
+    "cleanup": {
+      "type": "object",
+      "required": ["status", "resource_count", "failures", "private_scratch_removed"],
+      "properties": {
+        "status": { "enum": ["Passed", "Failed"] },
+        "resource_count": { "type": "integer", "minimum": 0 },
+        "failures": { "type": "array", "items": { "type": "string" } },
+        "private_scratch_removed": { "type": "boolean" }
+      }
+    },
+    "error": { "type": "string" }
+  },
+  "$defs": { "sha1": { "type": "string", "pattern": "^[0-9a-f]{40}$" } }
+}

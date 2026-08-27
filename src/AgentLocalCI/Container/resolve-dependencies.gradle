@@ -1,0 +1,53 @@
+import org.gradle.api.artifacts.ProjectDependency
+
+gradle.projectsEvaluated {
+    def resolvedConfigurations = 0
+    def resolvedDependencies = 0
+    def projects = rootProject.allprojects.toList().sort { left, right -> left.path <=> right.path }
+    projects.each { project ->
+        project.configurations
+            .findAll { configuration -> configuration.canBeResolved && !configuration.name.toLowerCase().contains("androidtest") }
+            .sort { left, right -> left.name <=> right.name }
+            .each { configuration ->
+                def external = configuration.copyRecursive { dependency -> !(dependency instanceof ProjectDependency) }
+                def count = external.allDependencies.size()
+                if (count > 0) {
+                    logger.lifecycle("AgentLocalCI dependency fetch: ${project.path}:${configuration.name} (${count})")
+                    external.resolve()
+                    resolvedConfigurations++
+                    resolvedDependencies += count
+                }
+            }
+    }
+
+    def androidProject = projects.find { project ->
+        project.plugins.hasPlugin("com.android.application") || project.plugins.hasPlugin("com.android.library")
+    }
+    if (androidProject != null) {
+        def androidPlugin = androidProject.plugins.findPlugin("com.android.application")
+        if (androidPlugin == null) androidPlugin = androidProject.plugins.findPlugin("com.android.library")
+        def loader = androidPlugin.class.classLoader
+        def agpVersion = loader.loadClass("com.android.Version").getField("ANDROID_GRADLE_PLUGIN_VERSION").get(null)?.toString()
+        def properties = new Properties()
+        def stream = loader.getResourceAsStream("com/android/build/gradle/internal/res/aapt2_version.properties")
+        if (stream == null) throw new GradleException("AgentLocalCI could not read the Android plugin AAPT2 version resource")
+        try { properties.load(stream) } finally { stream.close() }
+        def buildNumber = properties.getProperty("aapt2Version")
+        if (!(agpVersion ==~ /[0-9]+\.[0-9]+\.[0-9]+(?:[-.][A-Za-z0-9]+)*/) || !(buildNumber ==~ /[0-9]+/)) {
+            throw new GradleException("AgentLocalCI rejected invalid AAPT2 metadata")
+        }
+        def version = "${agpVersion}-${buildNumber}"
+        def dependency = androidProject.dependencies.create(
+            group: "com.android.tools.build", name: "aapt2", version: version, classifier: "linux", ext: "jar"
+        )
+        def detached = androidProject.configurations.detachedConfiguration(dependency)
+        detached.canBeConsumed = false
+        detached.canBeResolved = true
+        logger.lifecycle("AgentLocalCI Android AAPT2 fetch: ${version}:linux")
+        def files = detached.resolve()
+        if (files.size() != 1 || !files.first().name.endsWith("-linux.jar")) {
+            throw new GradleException("AgentLocalCI did not resolve exactly one Linux AAPT2 artifact")
+        }
+    }
+    logger.lifecycle("AgentLocalCI resolved ${resolvedDependencies} external dependencies across ${resolvedConfigurations} configurations")
+}

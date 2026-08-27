@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "enabled": true,
+  "executor": "docker",
+  "max_parallel": 1,
+  "allow_host_executor": false,
+  "allow_privileged": false,
+  "allow_host_network": false,
+  "allow_host_mounts": false,
+  "allow_docker_socket": false,
+  "allow_devices": false,
+  "allow_custom_images": false,
+  "allow_secrets": false,
+  "allowed_environment_names": ["NODE_ENV", "TZ", "LANG", "LC_ALL"],
+  "allowed_dependency_hosts": [
+    "dl.google.com",
+    "downloads.gradle.org",
+    "github.com",
+    "github-releases.githubusercontent.com",
+    "maven.google.com",
+    "objects.githubusercontent.com",
+    "plugins-artifacts.gradle.org",
+    "plugins.gradle.org",
+    "registry.npmjs.org",
+    "release-assets.githubusercontent.com",
+    "repo.maven.apache.org",
+    "services.gradle.org",
+    "storage.googleapis.com"
+  ],
+  "resources": {
+    "cpu_limit": 4,
+    "memory_limit": "8g",
+    "pids_limit": 768,
+    "stage_timeout_seconds": 1800,
+    "run_timeout_seconds": 14400,
+    "output_limit_mib": 50,
+    "minimum_free_disk_gib": 20,
+    "gradle_max_workers": 2
+  },
+  "required_profiles": [],
+  "required_stage_ids": {}
+}
