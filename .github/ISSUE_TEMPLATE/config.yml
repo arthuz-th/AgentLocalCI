@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Private vulnerability report
+    url: https://github.com/arthuz-th/AgentLocalCI/security/advisories/new
+    about: Report sandbox, cleanup, provenance, network, or sensitive-data vulnerabilities privately.

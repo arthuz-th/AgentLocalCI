@@ -1,0 +1,50 @@
+name: Bug report
+description: Report a reproducible non-security defect
+title: "[Bug]: "
+labels: [bug, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not post secrets or private repository content. Security issues belong in a private advisory."
+  - type: input
+    id: version
+    attributes:
+      label: AgentLocalCI version and commit
+      placeholder: "0.1.0-alpha.1 / 40-character SHA"
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Windows, PowerShell, Git, Docker Desktop, Docker Engine, CPU, memory, and free disk.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: Exact sanitized commands and a minimal public fixture.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and sanitized evidence
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety checks
+      options:
+        - label: I removed secrets, personal paths, customer data, and private source.
+          required: true
+        - label: This is not a vulnerability report.
+          required: true

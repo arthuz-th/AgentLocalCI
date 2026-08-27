@@ -1,0 +1,36 @@
+# AgentLocalCI local state and reports
+.agentlocalci/runtime/
+.agentlocalci/local-policy.yml
+.agentlocalci/*.local.*
+*.log
+*.tmp
+*.stackdump
+
+# Common generated output
+node_modules/
+.next/
+build/
+dist/
+out/
+coverage/
+artifacts/
+.gradle/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Secrets and local environment files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Test scratch
+.test-tmp/
+test-results/
