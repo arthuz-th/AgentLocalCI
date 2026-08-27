@@ -132,11 +132,11 @@ Test-Case "container arguments enforce unprivileged read-only offline shape" {
 Test-Case "exact revision rejects names abbreviations and uppercase" {
     $root = Join-Path ([IO.Path]::GetTempPath()) ("agentlocalci-git-" + [Guid]::NewGuid().ToString('N'))
     try {
-        & git.exe init -q -b main $root
+        & git init -q -b main $root
         [IO.File]::WriteAllText((Join-Path $root 'a.txt'), 'one')
-        & git.exe -C $root add a.txt
-        & git.exe -C $root -c user.name=Test -c user.email=test@example.invalid commit -q -m one
-        $sha = (& git.exe -C $root rev-parse HEAD).Trim()
+        & git -C $root add a.txt
+        & git -C $root -c user.name=Test -c user.email=test@example.invalid commit -q -m one
+        $sha = (& git -C $root rev-parse HEAD).Trim()
         Assert-Equal (& $module { param($r,$s) Resolve-AgentLocalCiCommit $r $s } $root $sha) $sha "exact SHA"
         foreach ($invalid in @('HEAD', $sha.Substring(0,12), $sha.ToUpperInvariant())) {
             $blocked = $false
@@ -153,22 +153,22 @@ Test-Case "provenance pack contains exact tree but not parent commit" {
     $root = Join-Path ([IO.Path]::GetTempPath()) ("agentlocalci-pack-" + [Guid]::NewGuid().ToString('N'))
     $temporaryHome = Join-Path ([IO.Path]::GetTempPath()) ("agentlocalci-home-" + [Guid]::NewGuid().ToString('N'))
     try {
-        & git.exe init -q -b main $root
+        & git init -q -b main $root
         [IO.File]::WriteAllText((Join-Path $root 'a.txt'), 'one')
-        & git.exe -C $root add a.txt
-        & git.exe -C $root -c user.name=Test -c user.email=test@example.invalid commit -q -m one
-        $parent = (& git.exe -C $root rev-parse HEAD).Trim()
+        & git -C $root add a.txt
+        & git -C $root -c user.name=Test -c user.email=test@example.invalid commit -q -m one
+        $parent = (& git -C $root rev-parse HEAD).Trim()
         [IO.File]::WriteAllText((Join-Path $root 'b.txt'), 'two')
-        & git.exe -C $root add b.txt
-        & git.exe -C $root -c user.name=Test -c user.email=test@example.invalid commit -q -m two
-        $sha = (& git.exe -C $root rev-parse HEAD).Trim()
+        & git -C $root add b.txt
+        & git -C $root -c user.name=Test -c user.email=test@example.invalid commit -q -m two
+        $sha = (& git -C $root rev-parse HEAD).Trim()
         $scratch = Join-Path $temporaryHome 'scratch'
         [IO.Directory]::CreateDirectory($scratch) | Out-Null
         $context = [pscustomobject]@{ RepositoryRoot = $root }
         $pack = & $module { param($c,$s,$d) New-AgentLocalCiProvenancePack $c $s $d } $context $sha $scratch
         Assert-True (Test-Path -LiteralPath $pack.Path) "pack missing"
         Assert-True (-not [bool]$pack.HistoryIncluded) "history flag"
-        $verify = & git.exe verify-pack -v $pack.IndexPath | Out-String
+        $verify = & git verify-pack -v $pack.IndexPath | Out-String
         Assert-True ($verify -notmatch [Regex]::Escape($parent)) "parent commit leaked into pack"
     }
     finally {
@@ -213,10 +213,10 @@ Test-Case "empty resource recovery is valid and ownership records are strict" {
     Assert-True (-not (& $module { param($x,$r) Test-AgentLocalCiTrackedResourceShape $x $r } $valid $runId)) "empty resource kind was accepted"
 }
 
-Test-Case "path containment handles a drive root without doubled separator" {
-    $root = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($env:TEMP))
+Test-Case "path containment handles a filesystem root without doubled separator" {
+    $root = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath([IO.Path]::GetTempPath()))
     $child = Join-Path $root 'agentlocalci-contained'
-    Assert-True (& $module { param($c,$r) Test-AgentLocalCiPathContained $c $r } $child $root) "drive-root containment failed"
+    Assert-True (& $module { param($c,$r) Test-AgentLocalCiPathContained $c $r } $child $root) "filesystem-root containment failed"
 }
 
 Test-Case "Docker network gateway parsing tolerates omitted fields" {
@@ -268,7 +268,7 @@ Test-Case "Gradle init starter includes wrapper redirect hosts" {
     $root = Join-Path ([IO.Path]::GetTempPath()) ("agentlocalci-init-gradle-" + [Guid]::NewGuid().ToString('N'))
     $temporaryHome = Join-Path ([IO.Path]::GetTempPath()) ("agentlocalci-init-home-" + [Guid]::NewGuid().ToString('N'))
     try {
-        & git.exe init -q -b main $root
+        & git init -q -b main $root
         [IO.File]::WriteAllText((Join-Path $root 'gradlew'), '#!/usr/bin/env sh')
         [void](& $module { param($h,$r) Initialize-AgentLocalCiRepository $h $r $null } $temporaryHome $root)
         $pipeline = Get-Content -LiteralPath (Join-Path $root '.agentlocalci\pipeline.yml') -Raw -Encoding UTF8 | ConvertFrom-Json -Depth 50
