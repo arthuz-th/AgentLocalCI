@@ -7,16 +7,18 @@ $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $cliPath = Join-Path $repoRoot "bin\agentlocalci.ps1"
 $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ("agentlocalci-symlink-fixture-" + [Guid]::NewGuid().ToString("N"))
 $temporaryHome = Join-Path ([IO.Path]::GetTempPath()) ("agentlocalci-symlink-home-" + [Guid]::NewGuid().ToString("N"))
+$gitCommand = (Get-Command git -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$pwshCommand = (Get-Command pwsh -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 
 function Invoke-Git {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
-    $output = @(& git.exe -C $fixtureRoot @Arguments 2>&1 | ForEach-Object { [string]$_ })
+    $output = @(& $gitCommand -C $fixtureRoot @Arguments 2>&1 | ForEach-Object { [string]$_ })
     if ($LASTEXITCODE -ne 0) { throw "git $($Arguments -join ' ') failed: $($output -join '; ')" }
     return $output
 }
 
 try {
-    & git.exe init -q -b main $fixtureRoot
+    & $gitCommand init -q -b main $fixtureRoot
     if ($LASTEXITCODE -ne 0) { throw "fixture git init failed" }
     Invoke-Git @("config", "user.name", "AgentLocalCI Test") | Out-Null
     Invoke-Git @("config", "user.email", "test@example.invalid") | Out-Null
@@ -64,7 +66,7 @@ try {
     $treeEntry = (Invoke-Git @("ls-tree", $sha, "--", "escape") | Select-Object -Last 1).Trim()
     if ($treeEntry -cnotmatch '^120000 blob [0-9a-f]{40}\tescape$') { throw "fixture did not contain an exact Git symbolic-link entry: $treeEntry" }
 
-    $output = @(& pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $cliPath run --sha $sha --profile standard --home $temporaryHome --repository $fixtureRoot 2>&1 | ForEach-Object { [string]$_ })
+    $output = @(& $pwshCommand -NoLogo -NoProfile -NonInteractive -File $cliPath run --sha $sha --profile standard --home $temporaryHome --repository $fixtureRoot 2>&1 | ForEach-Object { [string]$_ })
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 4) { throw "symlink escape returned $exitCode instead of safety exit 4: $($output -join '; ')" }
 
@@ -85,7 +87,7 @@ finally {
     }
     else {
         if ((Test-Path -LiteralPath $temporaryHome) -and (Test-Path -LiteralPath $fixtureRoot)) {
-            & pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $cliPath clean --wait-seconds 1 --home $temporaryHome --repository $fixtureRoot *> $null
+            & $pwshCommand -NoLogo -NoProfile -NonInteractive -File $cliPath clean --wait-seconds 1 --home $temporaryHome --repository $fixtureRoot *> $null
         }
         foreach ($path in @($fixtureRoot, $temporaryHome)) {
             if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force }

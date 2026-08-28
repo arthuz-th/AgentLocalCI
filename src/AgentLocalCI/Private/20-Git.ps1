@@ -6,17 +6,18 @@ function Invoke-AgentLocalCiGit {
         [AllowNull()][string]$StandardInputText
     )
     $git = Get-AgentLocalCiGitPath
+    $nullDevice = Get-AgentLocalCiNullDevice
     $base = @(
         "--no-pager", "--no-replace-objects",
-        "-c", "core.hooksPath=NUL",
-        "-c", "core.attributesFile=NUL",
+        "-c", "core.hooksPath=$nullDevice",
+        "-c", "core.attributesFile=$nullDevice",
         "-c", "core.fsmonitor=false",
         "-c", "credential.helper=",
         "-C", $RepositoryRoot
     )
     return Invoke-AgentLocalCiNative -FilePath $git -Arguments @($base + $Arguments) -AllowFailure:$AllowFailure -StandardInputText $StandardInputText -Environment @{
         GIT_CONFIG_NOSYSTEM = "1"
-        GIT_CONFIG_GLOBAL = "NUL"
+        GIT_CONFIG_GLOBAL = $nullDevice
         GIT_TERMINAL_PROMPT = "0"
         GIT_OPTIONAL_LOCKS = "0"
         GIT_ASKPASS = ""
@@ -96,7 +97,7 @@ function New-AgentLocalCiProvenancePack {
             Throw-AgentLocalCi -Message "The selected exact tree contains reserved Git metadata path content" -ExitCode 4
         }
         if ($mode -ceq "160000" -or $type -ceq "commit") {
-            Throw-AgentLocalCi -Message "Git submodules are not supported in AgentLocalCI 0.1; the selected exact tree contains a gitlink" -ExitCode 4
+            Throw-AgentLocalCi -Message "Git submodules are not supported in AgentLocalCI 0.2; the selected exact tree contains a gitlink" -ExitCode 4
         }
         if ($mode -notin @("040000", "100644", "100755", "120000") -or $type -notin @("blob", "tree")) {
             Throw-AgentLocalCi -Message "Git returned an unsupported tree entry mode or type" -ExitCode 4

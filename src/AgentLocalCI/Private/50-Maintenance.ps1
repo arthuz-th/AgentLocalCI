@@ -5,64 +5,85 @@ function Invoke-AgentLocalCiDoctor {
         [AllowNull()][string]$PolicyPath,
         [switch]$BuildImage
     )
-    $checks = New-Object System.Collections.Generic.List[object]
+    $checks = [Collections.Generic.List[object]]::new()
     $add = {
-        param($Name, $Passed, $Detail)
+        param($Name, $Passed, $Detail, $Fix = "")
         $checks.Add([pscustomobject]@{
-            name = $Name
+            name = [string]$Name
             passed = [bool]$Passed
             detail = ConvertTo-AgentLocalCiSafeDisplayText ([string]$Detail) 1000
+            fix = ConvertTo-AgentLocalCiSafeDisplayText ([string]$Fix) 1000
         })
     }
 
-    & $add "platform" $IsWindows $(if ($IsWindows) { [Environment]::OSVersion.VersionString } else { "AgentLocalCI 0.1 supports Windows hosts only" })
-    & $add "powershell" ($PSVersionTable.PSVersion -ge [Version]"7.4") $PSVersionTable.PSVersion.ToString()
+    $platform = Get-AgentLocalCiPlatformSupport
+    & $add "platform" $platform.Supported ("{0} / {1}; support={2}" -f $platform.Platform, (Get-AgentLocalCiHostArchitecture), $platform.Status) $(if ($platform.Supported) { "" } else { "Use Windows, macOS, or Linux with PowerShell 7 and a Linux Docker engine." })
+
+    $powershellPassed = $PSVersionTable.PSVersion -ge [Version]"7.4"
+    $powershellFix = switch ($platform.Platform) {
+        "macos" { "Install or upgrade with Homebrew: brew install powershell" }
+        "windows" { "Install PowerShell 7.4 or newer from Microsoft, then open a new terminal." }
+        "linux" { "Install PowerShell 7.4 or newer from Microsoft's package repository." }
+        default { "Install PowerShell 7.4 or newer." }
+    }
+    & $add "powershell" $powershellPassed $PSVersionTable.PSVersion.ToString() $(if ($powershellPassed) { "" } else { $powershellFix })
+
     try {
         $git = Invoke-AgentLocalCiNative (Get-AgentLocalCiGitPath) @("--version")
-        & $add "git" $true $git.Text.Trim()
+        & $add "git" $true $git.Text.Trim() ""
     }
-    catch { & $add "git" $false $_.Exception.Message }
+    catch {
+        $fix = if ($platform.Platform -ceq "macos") { "Install Apple's command-line tools with: xcode-select --install" } else { "Install Git and make sure the git command is on PATH." }
+        & $add "git" $false $_.Exception.Message $fix
+    }
 
+    $dockerPassed = $false
     try {
         $dockerVersion = (Invoke-AgentLocalCiDocker @("version", "--format", "{{json .}}" )).Text | ConvertFrom-Json -Depth 20
         $dockerInfo = (Invoke-AgentLocalCiDocker @("info", "--format", "{{json .}}" )).Text | ConvertFrom-Json -Depth 20
-        $linux = [string]$dockerInfo.OSType -ceq "linux"
-        & $add "docker-linux-server" $linux ("client {0}; server {1}; OSType {2}; CPUs {3}; memory {4:N1} GiB" -f $dockerVersion.Client.Version, $dockerVersion.Server.Version, $dockerInfo.OSType, $dockerInfo.NCPU, ([double]$dockerInfo.MemTotal / 1GB))
+        $architecture = Get-AgentLocalCiDockerArchitecture
+        $dockerPassed = [string]$dockerInfo.OSType -ceq "linux" -and $architecture -in @("amd64", "arm64")
+        & $add "docker-linux-server" $dockerPassed ("client {0}; server {1}; OS {2}; arch {3}; CPUs {4}; memory {5:N1} GiB" -f $dockerVersion.Client.Version, $dockerVersion.Server.Version, $dockerInfo.OSType, $architecture, $dockerInfo.NCPU, ([double]$dockerInfo.MemTotal / 1GB)) $(if ($dockerPassed) { "" } else { "Switch Docker to Linux containers and use an amd64 or arm64 Docker engine." })
     }
-    catch { & $add "docker-linux-server" $false $_.Exception.Message }
+    catch {
+        $fix = if ($platform.Platform -ceq "macos") { "Install and start Docker Desktop for Mac, then wait until 'docker info' succeeds." } else { "Install and start Docker Desktop or another compatible Linux Docker engine." }
+        & $add "docker-linux-server" $false $_.Exception.Message $fix
+    }
 
     $context = $null
     try {
         $context = Get-AgentLocalCiContext $Home $RepositoryRoot $PolicyPath -RepositoryOptional
-        & $add "machine-policy" $true ("schema {0}; enabled={1}; executor={2}" -f $context.Policy.schema_version, $context.Policy.enabled, $context.Policy.executor)
-        & $add "controller-assets" $true ("identity " + (Get-AgentLocalCiControllerIdentity $context))
-        $drive = [IO.DriveInfo]::new([IO.Path]::GetPathRoot($context.Home))
-        $freeGiB = [Math]::Round($drive.AvailableFreeSpace / 1GB, 1)
-        & $add "free-disk" ($freeGiB -ge [double]$context.Policy.resources.minimum_free_disk_gib) ("$freeGiB GiB available; policy minimum $($context.Policy.resources.minimum_free_disk_gib) GiB")
-        if ($BuildImage) {
+        & $add "machine-policy" $true ("schema {0}; enabled={1}; executor={2}" -f $context.Policy.schema_version, $context.Policy.enabled, $context.Policy.executor) ""
+        & $add "controller-assets" $true ("identity " + (Get-AgentLocalCiControllerIdentity $context)) ""
+        $freeGiB = [Math]::Round((Get-AgentLocalCiFreeDiskBytes $context.Home) / 1GB, 1)
+        $diskPassed = $freeGiB -ge [double]$context.Policy.resources.minimum_free_disk_gib
+        & $add "free-disk" $diskPassed ("$freeGiB GiB available; policy minimum $($context.Policy.resources.minimum_free_disk_gib) GiB") $(if ($diskPassed) { "" } else { "Free disk space or lower the machine-policy minimum after reviewing the risk." })
+        if ($BuildImage -and $dockerPassed) {
             $image = Get-AgentLocalCiTrustedImage $context
-            & $add "trusted-image" $true ("{0} ({1})" -f $image.Id.Substring(0, [Math]::Min(19, $image.Id.Length)), $image.Identity)
+            & $add "trusted-image" $true ("{0}; controller {1}; linux/{2}" -f $image.Id.Substring(0, [Math]::Min(19, $image.Id.Length)), $image.Identity, $image.Architecture) ""
         }
     }
-    catch { & $add "controller-context" $false $_.Exception.Message }
+    catch { & $add "controller-context" $false $_.Exception.Message "Run this command from a Git repository or pass --repository PATH; keep the AgentLocalCI home outside the repository." }
 
-    if ($null -ne $context) {
+    if ($null -ne $context -and $dockerPassed) {
         $doctorRunId = New-AgentLocalCiRunId
         $doctorResources = [Collections.Generic.List[object]]::new()
         try {
             $networkName = "$(Get-AgentLocalCiDockerPrefix $doctorRunId)-doctor-net"
             New-AgentLocalCiDockerNetwork $networkName $doctorRunId $doctorResources | Out-Null
-            & $add "dependency-network-isolation" $true "internal bridge, isolated IPv4 gateway, IPv6 disabled"
+            & $add "dependency-network-isolation" $true "internal bridge, isolated IPv4 gateway, IPv6 disabled" ""
         }
-        catch { & $add "dependency-network-isolation" $false $_.Exception.Message }
+        catch { & $add "dependency-network-isolation" $false $_.Exception.Message "Update Docker Desktop and ensure the current engine supports isolated internal bridge networks." }
         finally {
             $doctorCleanup = Remove-AgentLocalCiResources $doctorResources
-            & $add "doctor-resource-cleanup" $doctorCleanup.Passed $(if ($doctorCleanup.Passed) { "all doctor-owned Docker resources removed and absence verified" } else { $doctorCleanup.Failures -join "; " })
+            & $add "doctor-resource-cleanup" $doctorCleanup.Passed $(if ($doctorCleanup.Passed) { "all doctor-owned Docker resources removed and absence verified" } else { $doctorCleanup.Failures -join "; " }) $(if ($doctorCleanup.Passed) { "" } else { "Run 'agentlocalci clean' and inspect any retained owner-labelled resource before continuing." })
         }
     }
 
     return [pscustomobject]@{
         Passed = (@($checks | Where-Object { -not $_.passed }).Count -eq 0)
+        Platform = $platform.Platform
+        SupportStatus = $platform.Status
         Checks = $checks.ToArray()
     }
 }

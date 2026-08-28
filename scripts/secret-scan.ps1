@@ -99,7 +99,8 @@ if ($IncludeHistory) {
             ':(exclude)src/AgentLocalCI/Private/00-Common.ps1',
             ':(exclude)scripts/secret-scan.ps1'
         )
-        $history = (& git.exe @historyArguments 2>$null | Out-String)
+        $gitCommand = (Get-Command git -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+        $history = (& $gitCommand @historyArguments 2>$null | Out-String)
         if ($LASTEXITCODE -ne 0) {
             Add-Finding 'git-history' 'scan-failed'
         }

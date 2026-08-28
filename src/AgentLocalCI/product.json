@@ -1,12 +1,13 @@
 {
   "name": "AgentLocalCI",
-  "version": "0.1.0-alpha.1",
+  "version": "0.2.0-beta.1",
   "schema_version": 1,
   "platform_status": {
     "windows": "supported",
-    "linux": "planned",
-    "macos": "planned"
+    "macos": "beta",
+    "linux": "beta"
   },
-  "controller": "PowerShell 7",
-  "executor": "Docker Desktop Linux containers"
+  "controller": "PowerShell 7.4+",
+  "executor": "Linux containers through a local Docker engine",
+  "container_architectures": ["amd64", "arm64"]
 }

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$InstallRoot = (Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) "AgentLocalCI"),
+    [string]$InstallRoot,
     [switch]$NoPath,
     [switch]$Force,
     [switch]$Uninstall
@@ -10,34 +10,82 @@ Set-StrictMode -Version 3.0
 $ErrorActionPreference = "Stop"
 if ($PSVersionTable.PSVersion -lt [Version]"7.4") { throw "AgentLocalCI requires PowerShell 7.4 or newer" }
 
-function Get-SafeRoot([string]$Path) {
-    $full = [IO.Path]::GetFullPath($Path).TrimEnd([char[]]@('\', '/'))
-    $drive = [IO.Path]::GetPathRoot($full)
-    if ($full -eq $drive -or ($full.Substring($drive.Length).Trim([char[]]@('\', '/')) -split '[\\/]').Count -lt 2) { throw "AgentLocalCI refuses a broad install root: $full" }
-    $cursor = $full
-    while ($cursor) {
-        if (Test-Path -LiteralPath $cursor) {
-            $item = Get-Item -LiteralPath $cursor -Force
-            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "AgentLocalCI refuses reparse-point install paths: $cursor" }
-        }
-        if ($cursor -eq $drive) { break }
-        $cursor = Split-Path -Parent $cursor
-        if ([string]::IsNullOrWhiteSpace($cursor)) { $cursor = $drive }
-    }
-    return $full
+function Get-HostPlatform {
+    if ($IsWindows) { return "windows" }
+    if ($IsMacOS) { return "macos" }
+    if ($IsLinux) { return "linux" }
+    throw "AgentLocalCI supports Windows, macOS, and Linux hosts"
 }
 
-function Update-UserPath([string]$Directory, [bool]$Add) {
-    $current = [Environment]::GetEnvironmentVariable("Path", "User")
-    $parts = @($current -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    $normalized = [IO.Path]::GetFullPath($Directory).TrimEnd([char[]]@('\', '/'))
-    $kept = @($parts | Where-Object {
-        try { -not ([IO.Path]::GetFullPath($_).TrimEnd([char[]]@('\', '/')).Equals($normalized, [StringComparison]::OrdinalIgnoreCase)) }
-        catch { $true }
-    })
-    if ($Add) { $kept += $normalized }
-    [Environment]::SetEnvironmentVariable("Path", ($kept -join ';'), "User")
-    if ($Add -and -not (($env:Path -split ';') -contains $normalized)) { $env:Path = "$normalized;$env:Path" }
+function Get-PathComparison {
+    if ((Get-HostPlatform) -ceq "windows") { return [StringComparison]::OrdinalIgnoreCase }
+    return [StringComparison]::Ordinal
+}
+
+function Get-PathComparer {
+    if ((Get-HostPlatform) -ceq "windows") { return [StringComparer]::OrdinalIgnoreCase }
+    return [StringComparer]::Ordinal
+}
+
+function Test-PathEquals([string]$Left, [string]$Right) {
+    return $Left.Equals($Right, (Get-PathComparison))
+}
+
+function Get-UserHome {
+    $value = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
+    if ([string]::IsNullOrWhiteSpace($value)) { $value = [Environment]::GetEnvironmentVariable("HOME", "Process") }
+    if ([string]::IsNullOrWhiteSpace($value)) { throw "The current user home directory is unavailable" }
+    return [IO.Path]::GetFullPath($value)
+}
+
+function Get-DefaultInstallRoot {
+    switch (Get-HostPlatform) {
+        "windows" {
+            $root = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+            if ([string]::IsNullOrWhiteSpace($root)) { throw "LOCALAPPDATA is unavailable" }
+            return Join-Path $root "AgentLocalCI"
+        }
+        "macos" { return Join-Path (Get-UserHome) "Library/Application Support/AgentLocalCI" }
+        "linux" {
+            $root = [Environment]::GetEnvironmentVariable("XDG_STATE_HOME", "Process")
+            if ([string]::IsNullOrWhiteSpace($root)) { $root = Join-Path (Get-UserHome) ".local/state" }
+            return Join-Path $root "agentlocalci"
+        }
+    }
+}
+
+function Get-DefaultProfilePath {
+    switch (Get-HostPlatform) {
+        "macos" { return Join-Path (Get-UserHome) ".zprofile" }
+        "linux" { return Join-Path (Get-UserHome) ".profile" }
+        default { return "" }
+    }
+}
+
+function Assert-NoReparseAncestor([string]$Path) {
+    $cursor = [IO.Path]::GetFullPath($Path)
+    $root = [IO.Path]::GetPathRoot($cursor)
+    while ($true) {
+        if (Test-Path -LiteralPath $cursor) {
+            $item = Get-Item -LiteralPath $cursor -Force
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "AgentLocalCI refuses reparse-point or symbolic-link install paths: $cursor" }
+        }
+        if (Test-PathEquals $cursor $root) { break }
+        $parentInfo = [IO.Directory]::GetParent($cursor)
+        if ($null -eq $parentInfo) { throw "Could not prove the install path ancestry" }
+        $cursor = [IO.Path]::GetFullPath($parentInfo.FullName)
+    }
+}
+
+function Get-SafeRoot([string]$Path) {
+    $full = [IO.Path]::GetFullPath($Path)
+    $root = [IO.Path]::GetPathRoot($full)
+    if (Test-PathEquals $full $root) { throw "AgentLocalCI refuses a filesystem root: $full" }
+    $relative = $full.Substring($root.Length).Trim([char[]]@('\', '/'))
+    $segments = @($relative -split '[\\/]' | Where-Object { $_ })
+    if ($segments.Count -lt 2) { throw "AgentLocalCI refuses a broad install root: $full" }
+    Assert-NoReparseAncestor $full
+    return $full.TrimEnd([char[]]@('\', '/'))
 }
 
 function Get-FileInventory([string]$BasePath, [string]$Prefix = "") {
@@ -64,43 +112,103 @@ function Assert-FileInventoriesEqual([Collections.Generic.SortedDictionary[strin
     }
 }
 
-$root = Get-SafeRoot $InstallRoot
+function ConvertTo-ShellSingleQuoted([string]$Value) {
+    $single = [string][char]39
+    $double = [string][char]34
+    $embeddedSingle = $single + $double + $single + $double + $single
+    return $single + $Value.Replace($single, $embeddedSingle) + $single
+}
+
+function Remove-ManagedShellPath([string]$ProfilePath) {
+    if (-not (Test-Path -LiteralPath $ProfilePath -PathType Leaf)) { return $false }
+    $text = [IO.File]::ReadAllText($ProfilePath, [Text.Encoding]::UTF8)
+    $pattern = '(?ms)^# >>> AgentLocalCI PATH >>>\r?\n.*?^# <<< AgentLocalCI PATH <<<\r?\n?'
+    $updated = [Regex]::Replace($text, $pattern, "")
+    if ($updated -ceq $text) { return $false }
+    [IO.File]::WriteAllText($ProfilePath, $updated, [Text.UTF8Encoding]::new($false))
+    return $true
+}
+
+function Update-ManagedShellPath([string]$Directory, [string]$ProfilePath, [bool]$Add) {
+    if ([string]::IsNullOrWhiteSpace($ProfilePath)) { return }
+    $parent = Split-Path -Parent $ProfilePath
+    if (-not [string]::IsNullOrWhiteSpace($parent) -and -not (Test-Path -LiteralPath $parent -PathType Container)) { [IO.Directory]::CreateDirectory($parent) | Out-Null }
+    [void](Remove-ManagedShellPath $ProfilePath)
+    if (-not $Add) { return }
+    $existing = if (Test-Path -LiteralPath $ProfilePath -PathType Leaf) { [IO.File]::ReadAllText($ProfilePath, [Text.Encoding]::UTF8) } else { "" }
+    if ($existing.Length -gt 0 -and -not $existing.EndsWith("`n", [StringComparison]::Ordinal)) { $existing += "`n" }
+    $block = "# >>> AgentLocalCI PATH >>>`nexport PATH=$(ConvertTo-ShellSingleQuoted $Directory):`"`$PATH`"`n# <<< AgentLocalCI PATH <<<`n"
+    [IO.File]::WriteAllText($ProfilePath, $existing + $block, [Text.UTF8Encoding]::new($false))
+}
+
+function Update-UserPath([string]$Directory, [bool]$Add, [string]$ProfilePath) {
+    $normalized = [IO.Path]::GetFullPath($Directory).TrimEnd([char[]]@('\', '/'))
+    if ((Get-HostPlatform) -ceq "windows") {
+        $current = [Environment]::GetEnvironmentVariable("Path", "User")
+        $parts = @($current -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $kept = @($parts | Where-Object {
+            try { -not (Test-PathEquals ([IO.Path]::GetFullPath($_).TrimEnd([char[]]@('\', '/'))) $normalized) }
+            catch { $true }
+        })
+        if ($Add) { $kept += $normalized }
+        [Environment]::SetEnvironmentVariable("Path", ($kept -join ';'), "User")
+        if ($Add -and -not (($env:Path -split ';') | Where-Object { try { Test-PathEquals ([IO.Path]::GetFullPath($_).TrimEnd([char[]]@('\', '/'))) $normalized } catch { $false } })) { $env:Path = "$normalized;$env:Path" }
+        return
+    }
+    Update-ManagedShellPath $normalized $ProfilePath $Add
+}
+
+function Set-UnixExecutable([string]$Path) {
+    if ((Get-HostPlatform) -ceq "windows") { return }
+    [IO.File]::SetUnixFileMode($Path,
+        [IO.UnixFileMode]::UserRead -bor [IO.UnixFileMode]::UserWrite -bor [IO.UnixFileMode]::UserExecute -bor
+        [IO.UnixFileMode]::GroupRead -bor [IO.UnixFileMode]::GroupExecute -bor
+        [IO.UnixFileMode]::OtherRead -bor [IO.UnixFileMode]::OtherExecute)
+}
+
+$platform = Get-HostPlatform
+$root = Get-SafeRoot $(if ([string]::IsNullOrWhiteSpace($InstallRoot)) { Get-DefaultInstallRoot } else { $InstallRoot })
 $binRoot = Join-Path $root "bin"
+$manifestPath = Join-Path $root "current.json"
+$existingManifest = $null
+if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
+    try { $existingManifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json -Depth 20 }
+    catch { $existingManifest = $null }
+}
+
 if ($Uninstall) {
     if (-not (Test-Path -LiteralPath $root -PathType Container)) {
         [pscustomobject]@{ Uninstalled = $false; Reason = "not installed"; InstallRoot = $root }
         exit 0
     }
-    $manifestPath = Join-Path $root "current.json"
-    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw "Refusing to uninstall a directory without an AgentLocalCI ownership manifest" }
-    try { $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json -Depth 20 }
-    catch { throw "Refusing to uninstall a directory with an invalid AgentLocalCI ownership manifest" }
+    if ($null -eq $existingManifest) { throw "Refusing to uninstall a directory without a valid AgentLocalCI ownership manifest" }
     if (
-        [string]$manifest.product -cne "AgentLocalCI" -or
-        [int]$manifest.schema_version -ne 1 -or
-        [string]$manifest.identity -cnotmatch '^[0-9a-f]{20}$'
+        [string]$existingManifest.product -cne "AgentLocalCI" -or
+        [int]$existingManifest.schema_version -ne 1 -or
+        [string]$existingManifest.identity -cnotmatch '^[0-9a-f]{20}$'
     ) { throw "Refusing to uninstall a directory not proven to be owned by AgentLocalCI" }
-    $controllerRoot = [IO.Path]::GetFullPath([string]$manifest.controller_root).TrimEnd([char[]]@('\', '/'))
+    $controllerRoot = [IO.Path]::GetFullPath([string]$existingManifest.controller_root).TrimEnd([char[]]@('\', '/'))
     $ownedPrefix = $root + [IO.Path]::DirectorySeparatorChar
-    if (-not $controllerRoot.StartsWith($ownedPrefix, [StringComparison]::OrdinalIgnoreCase)) { throw "Refusing to uninstall because the controller escaped the AgentLocalCI root" }
-    Update-UserPath $binRoot $false
+    if (-not $controllerRoot.StartsWith($ownedPrefix, (Get-PathComparison))) { throw "Refusing to uninstall because the controller escaped the AgentLocalCI root" }
+    $managed = if ($null -ne $existingManifest.PSObject.Properties["path_managed"]) { [bool]$existingManifest.path_managed } else { $true }
+    $profilePath = if ($null -ne $existingManifest.PSObject.Properties["path_profile"]) { [string]$existingManifest.path_profile } else { Get-DefaultProfilePath }
+    if ($managed) { Update-UserPath $binRoot $false $profilePath }
     $backup = "$root.uninstalled-$([DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss'))-$([Guid]::NewGuid().ToString('N').Substring(0,8))"
     Move-Item -LiteralPath $root -Destination $backup
-    [pscustomobject]@{ Uninstalled = $true; Backup = $backup; ReportsPreserved = $true }
+    [pscustomobject]@{ Uninstalled = $true; Backup = $backup; ReportsPreserved = $true; PathUpdated = $managed; RestartShell = $managed }
     exit 0
 }
 
-$sourceModule = Join-Path $PSScriptRoot "src\AgentLocalCI"
-$sourceCli = Join-Path $PSScriptRoot "bin\agentlocalci.ps1"
-$defaultPolicy = Join-Path $PSScriptRoot "config\default-policy.yml"
+$sourceModule = Join-Path $PSScriptRoot "src/AgentLocalCI"
+$sourceCli = Join-Path $PSScriptRoot "bin/agentlocalci.ps1"
+$defaultPolicy = Join-Path $PSScriptRoot "config/default-policy.yml"
 foreach ($required in @($sourceModule, $sourceCli, $defaultPolicy)) { if (-not (Test-Path -LiteralPath $required)) { throw "Installer source is incomplete: $required" } }
 $product = Get-Content -LiteralPath (Join-Path $sourceModule "product.json") -Raw -Encoding UTF8 | ConvertFrom-Json
 $sourceInventory = Get-FileInventory $sourceModule "src/AgentLocalCI"
 $sourceCliItem = Get-Item -LiteralPath $sourceCli -Force
 if (($sourceCliItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "AgentLocalCI refuses a reparse-point CLI source" }
-if ($sourceInventory.ContainsKey("bin/agentlocalci.ps1")) { throw "Duplicate CLI inventory path" }
 $sourceInventory.Add("bin/agentlocalci.ps1", (Get-FileHash -LiteralPath $sourceCli -Algorithm SHA256).Hash.ToLowerInvariant())
-$parts = New-Object System.Collections.Generic.List[string]
+$parts = [Collections.Generic.List[string]]::new()
 $parts.Add("AgentLocalCI/$($product.version)")
 foreach ($entry in $sourceInventory.GetEnumerator()) { $parts.Add("$($entry.Key):$($entry.Value)") }
 $algorithm = [Security.Cryptography.SHA256]::Create()
@@ -113,10 +221,7 @@ $controllerRoot = Join-Path (Join-Path $root "controller") $identity
 if (Test-Path -LiteralPath $controllerRoot) {
     $controllerItem = Get-Item -LiteralPath $controllerRoot -Force
     if (($controllerItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "Existing controller identity is a reparse point; refusing mutation" }
-    if (-not $Force) {
-        $existingInventory = Get-FileInventory $controllerRoot
-        Assert-FileInventoriesEqual $sourceInventory $existingInventory
-    }
+    if (-not $Force) { Assert-FileInventoriesEqual $sourceInventory (Get-FileInventory $controllerRoot) }
     else {
         Remove-Item -LiteralPath $controllerRoot -Recurse -Force
         if (Test-Path -LiteralPath $controllerRoot) { throw "Forced repair could not prove removal of the previous controller identity" }
@@ -125,28 +230,65 @@ if (Test-Path -LiteralPath $controllerRoot) {
 if (-not (Test-Path -LiteralPath $controllerRoot)) {
     [IO.Directory]::CreateDirectory((Join-Path $controllerRoot "src")) | Out-Null
     [IO.Directory]::CreateDirectory((Join-Path $controllerRoot "bin")) | Out-Null
-    Copy-Item -LiteralPath $sourceModule -Destination (Join-Path $controllerRoot "src\AgentLocalCI") -Recurse
-    Copy-Item -LiteralPath $sourceCli -Destination (Join-Path $controllerRoot "bin\agentlocalci.ps1")
+    Copy-Item -LiteralPath $sourceModule -Destination (Join-Path $controllerRoot "src/AgentLocalCI") -Recurse
+    Copy-Item -LiteralPath $sourceCli -Destination (Join-Path $controllerRoot "bin/agentlocalci.ps1")
 }
-$installedInventory = Get-FileInventory $controllerRoot
-Assert-FileInventoriesEqual $sourceInventory $installedInventory
+Assert-FileInventoriesEqual $sourceInventory (Get-FileInventory $controllerRoot)
 
+$target = Join-Path $controllerRoot "bin/agentlocalci.ps1"
 $shimPs1 = @"
-`$target = '$($controllerRoot.Replace("'", "''"))\bin\agentlocalci.ps1'
+`$target = '$($target.Replace("'", "''"))'
 if (-not (Test-Path -LiteralPath `$target -PathType Leaf)) { [Console]::Error.WriteLine('AgentLocalCI controller is missing'); exit 3 }
-& pwsh.exe -NoLogo -NoProfile -NonInteractive -File `$target @args
+& pwsh -NoLogo -NoProfile -NonInteractive -File `$target @args
 exit `$LASTEXITCODE
 "@
-$shimCmd = "@pwsh.exe -NoLogo -NoProfile -NonInteractive -File `"$controllerRoot\bin\agentlocalci.ps1`" %* & call exit /b %%errorlevel%%`r`n"
 [IO.File]::WriteAllText((Join-Path $binRoot "agentlocalci.ps1"), $shimPs1, [Text.UTF8Encoding]::new($false))
-[IO.File]::WriteAllText((Join-Path $binRoot "agentlocalci.cmd"), $shimCmd, [Text.ASCIIEncoding]::new())
+
+if ($platform -ceq "windows") {
+    $shimCmd = "@pwsh.exe -NoLogo -NoProfile -NonInteractive -File `"$target`" %* & call exit /b %%errorlevel%%`r`n"
+    [IO.File]::WriteAllText((Join-Path $binRoot "agentlocalci.cmd"), $shimCmd, [Text.ASCIIEncoding]::new())
+}
+
+$unixTarget = ConvertTo-ShellSingleQuoted $target
+$shimSh = "#!/bin/sh`nexec pwsh -NoLogo -NoProfile -NonInteractive -File $unixTarget `"`$@`"`n"
+$unixShim = Join-Path $binRoot "agentlocalci"
+[IO.File]::WriteAllText($unixShim, $shimSh, [Text.UTF8Encoding]::new($false))
+Set-UnixExecutable $unixShim
+
 $tombstone = Join-Path $root "UNINSTALLED.txt"
 if (Test-Path -LiteralPath $tombstone -PathType Leaf) { Remove-Item -LiteralPath $tombstone -Force }
 if (-not (Test-Path -LiteralPath (Join-Path $root "policy.yml"))) { Copy-Item -LiteralPath $defaultPolicy -Destination (Join-Path $root "policy.yml") }
-$current = [ordered]@{ product = "AgentLocalCI"; schema_version = 1; version = [string]$product.version; identity = $identity; controller_root = $controllerRoot; installed_utc = [DateTime]::UtcNow.ToString("o") }
-[IO.File]::WriteAllText((Join-Path $root "current.json"), ($current | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
-if (-not $NoPath) { Update-UserPath $binRoot $true }
 
-$versionOutput = & pwsh.exe -NoLogo -NoProfile -NonInteractive -File (Join-Path $controllerRoot "bin\agentlocalci.ps1") version 2>&1
+$profilePath = Get-DefaultProfilePath
+$previouslyManaged = $false
+if ($null -ne $existingManifest -and $null -ne $existingManifest.PSObject.Properties["path_managed"]) { $previouslyManaged = [bool]$existingManifest.path_managed }
+$pathManaged = -not $NoPath -or $previouslyManaged
+if (-not $NoPath) { Update-UserPath $binRoot $true $profilePath }
+$current = [ordered]@{
+    product = "AgentLocalCI"
+    schema_version = 1
+    version = [string]$product.version
+    identity = $identity
+    controller_root = $controllerRoot
+    bin_root = $binRoot
+    host_platform = $platform
+    path_managed = $pathManaged
+    path_profile = $profilePath
+    installed_utc = [DateTime]::UtcNow.ToString("o")
+}
+[IO.File]::WriteAllText($manifestPath, ($current | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
+
+$versionOutput = & pwsh -NoLogo -NoProfile -NonInteractive -File $target version 2>&1
 if ($LASTEXITCODE -ne 0) { throw "Installed CLI self-check failed: $($versionOutput -join '; ')" }
-[pscustomobject]@{ Installed = $true; Version = [string]$product.version; Identity = $identity; InstallRoot = $root; ControllerRoot = $controllerRoot; Bin = $binRoot; PathUpdated = -not $NoPath }
+[pscustomobject]@{
+    Installed = $true
+    Version = [string]$product.version
+    Identity = $identity
+    Platform = $platform
+    InstallRoot = $root
+    ControllerRoot = $controllerRoot
+    Bin = $binRoot
+    Command = $unixShim
+    PathUpdated = -not $NoPath
+    RestartShell = (-not $NoPath -and $platform -ne "windows")
+}

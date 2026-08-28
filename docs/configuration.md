@@ -1,6 +1,20 @@
 # Configuration
 
-Project configuration lives at `.agentlocalci/pipeline.yml`. Version 0.1 accepts JSON syntax as a deliberately restricted JSON-compatible YAML subset.
+Project configuration lives at `.agentlocalci/pipeline.yml`. Version 0.2 accepts JSON syntax as a deliberately restricted JSON-compatible YAML subset.
+
+## Automatic setup
+
+```powershell
+agentlocalci init
+# or
+agentlocalci quickstart --commit
+```
+
+With `package.json` and `package-lock.json`, setup detects existing `lint`, typecheck variants, non-placeholder `test`, and `build` scripts. It emits only safe npm argv and never embeds the script body.
+
+Gradle setup detects committed wrappers at `gradlew`, `android/gradlew`, and `apps/android/gradlew`. Unknown project shapes receive a non-acceptance diagnostic profile.
+
+Always review the generated file before treating it as policy.
 
 ## Top-level fields
 
@@ -16,47 +30,14 @@ Unknown properties fail validation.
 
 ## Stages
 
-A stage has:
+A stage has `id`, argv-array `command`, safe relative `working_directory`, dependency-cache `needs`, optional policy-approved non-secret `environment`, and bounded `timeout_seconds`.
 
-- `id`: lowercase identifier.
-- `command`: argv array, never a `shell:` string.
-- `working_directory`: safe path relative to repository root; `.` is valid.
-- `needs`: zero or more of `npm`, `gradle`.
-- `environment`: optional policy-approved non-secret values.
-- `timeout_seconds`: positive value no greater than machine policy.
+Stages remain sequential in 0.2. `needs` names dependency cache types, not stage dependencies. Command-string flags such as `bash -c`, `pwsh -Command`, `cmd /c`, `node -e`, and `python -c` are rejected. Commit a script file and invoke it by argv.
 
-Stages are sequential in 0.1. `needs` refers to dependency cache types, not stage dependencies.
+## Machine policy locations
 
-Command-string interpreter flags such as `bash -c`, `pwsh -Command`, `cmd /c`, `node -e`, and `python -c` are rejected. Commit a script file and invoke the file.
-
-## npm
-
-```json
-"dependencies": {
-  "npm": {
-    "working_directory": ".",
-    "lockfile": "package-lock.json"
-  }
-}
-```
-
-The exact tree must contain the lockfile. Preparation runs `npm ci --ignore-scripts --no-audit --no-fund` through the controlled proxy. Validation mounts the resulting cache and configures offline mode.
-
-## Gradle
-
-```json
-"dependencies": {
-  "gradle": {
-    "working_directory": "android",
-    "wrapper": "gradlew"
-  }
-}
-```
-
-The wrapper and lock-relevant build files must be committed. Preparation uses the wrapper and a trusted init script to resolve dependencies. Each validation stage receives a fresh writable run-private copy of the prepared Gradle user-home while networking is disabled; stage changes are never promoted to another stage or run.
-
-## Machine policy
-
-The default user-local policy is `%LOCALAPPDATA%\AgentLocalCI\policy.yml`. It controls enablement, executor, allowed dependency hosts, allowed environment names, resource ceilings, timeouts, output limits, required profiles, and required stage IDs.
+- Windows: `%LOCALAPPDATA%\AgentLocalCI\policy.yml`
+- macOS: `~/Library/Application Support/AgentLocalCI/policy.yml`
+- Linux: `$XDG_STATE_HOME/agentlocalci/policy.yml` or `~/.local/state/agentlocalci/policy.yml`
 
 A repository cannot broaden machine policy. Policy files must remain inside the selected AgentLocalCI home.

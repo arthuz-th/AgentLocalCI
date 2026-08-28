@@ -101,6 +101,11 @@ function Invoke-AgentLocalCiRun {
     $report = [ordered]@{
         schema_version = 1
         tool = [ordered]@{ name = "AgentLocalCI"; version = $script:AgentLocalCiVersion; controller_identity = if ($null -ne $image) { $image.Identity } else { Get-AgentLocalCiControllerIdentity $context } }
+        host = [ordered]@{
+            platform = Get-AgentLocalCiHostPlatform
+            architecture = Get-AgentLocalCiHostArchitecture
+            powershell = $PSVersionTable.PSVersion.ToString()
+        }
         run_id = $runId
         project = ConvertTo-AgentLocalCiSafeDisplayText ([string]$pipeline.project.name) 80
         target_sha = $target
@@ -131,7 +136,7 @@ function Invoke-AgentLocalCiRun {
             policy_sha256 = Get-AgentLocalCiStringSha256 ($context.Policy | ConvertTo-Json -Depth 100 -Compress)
             repository_path_sha256 = Get-AgentLocalCiStringSha256 $context.RepositoryRoot.ToLowerInvariant()
         }
-        image = if ($null -ne $image) { [ordered]@{ id = $image.Id; tag = $image.Tag; identity = $image.Identity; built_at = $image.BuiltAt } } else { $null }
+        image = if ($null -ne $image) { [ordered]@{ id = $image.Id; tag = $image.Tag; identity = $image.Identity; built_at = $image.BuiltAt; architecture = $image.Architecture; os = $image.Os } } else { $null }
         security = [ordered]@{
             execution_boundary = $script:AgentLocalCiBoundaryMarker
             exact_tree_source = $true
@@ -155,5 +160,5 @@ function Invoke-AgentLocalCiRun {
     }
     Write-AgentLocalCiReport $directories $report
     Write-AgentLocalCiRunState $directories $runId $resultName $target $profile.name "completed" $resources
-    return [pscustomobject]@{ ExitCode = $exitCode; RunId = $runId; Result = $resultName; ReportPath = $directories.Report; SummaryPath = $directories.Summary; Report = [pscustomobject]$report }
+    return [pscustomobject]@{ ExitCode = $exitCode; RunId = $runId; Result = $resultName; ReportPath = $directories.Report; SummaryPath = $directories.Summary; HtmlPath = $directories.Html; Report = [pscustomobject]$report }
 }

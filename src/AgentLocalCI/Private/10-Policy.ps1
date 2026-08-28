@@ -1,12 +1,7 @@
 function New-AgentLocalCiDefaultPolicy {
     $logical = [Math]::Max(1, [Environment]::ProcessorCount)
     $cpu = if ($logical -le 2) { 1 } else { [Math]::Min(6, $logical - 2) }
-    $memoryGiB = 8
-    try {
-        $computer = Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
-        $memoryGiB = [Math]::Max(4, [Math]::Min(16, [Math]::Floor(([double]$computer.TotalPhysicalMemory / 1GB) * 0.60)))
-    }
-    catch { }
+    $memoryGiB = Get-AgentLocalCiRecommendedMemoryGiB
     return [pscustomobject]@{
         schema_version = 1
         enabled = $true
@@ -42,12 +37,6 @@ function New-AgentLocalCiDefaultPolicy {
         required_profiles = @()
         required_stage_ids = [pscustomobject]@{}
     }
-}
-
-function Get-AgentLocalCiDefaultHome {
-    $root = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
-    if ([string]::IsNullOrWhiteSpace($root)) { Throw-AgentLocalCi -Message "LOCALAPPDATA is unavailable" -ExitCode 3 }
-    return (Join-Path $root "AgentLocalCI")
 }
 
 function Test-AgentLocalCiEnvironmentName {
@@ -107,9 +96,9 @@ function Assert-AgentLocalCiPolicy {
     foreach ($name in @("enabled", "allow_host_executor", "allow_privileged", "allow_host_network", "allow_host_mounts", "allow_docker_socket", "allow_devices", "allow_custom_images", "allow_secrets")) {
         if ((Get-AgentLocalCiRequiredProperty -Value $Policy -Name $name -Context "machine policy") -isnot [bool]) { Throw-AgentLocalCi -Message "machine policy '$name' must be boolean" -ExitCode 2 }
     }
-    if ([string]$Policy.executor -cne "docker" -or [int]$Policy.max_parallel -ne 1) { Throw-AgentLocalCi -Message "AgentLocalCI 0.1 requires docker and max_parallel=1" -ExitCode 2 }
+    if ([string]$Policy.executor -cne "docker" -or [int]$Policy.max_parallel -ne 1) { Throw-AgentLocalCi -Message "AgentLocalCI 0.2 requires docker and max_parallel=1" -ExitCode 2 }
     if ($Policy.allow_host_executor -or $Policy.allow_privileged -or $Policy.allow_host_network -or $Policy.allow_host_mounts -or $Policy.allow_docker_socket -or $Policy.allow_devices -or $Policy.allow_custom_images -or $Policy.allow_secrets) {
-        Throw-AgentLocalCi -Message "AgentLocalCI 0.1 fails closed when any unsafe capability is enabled" -ExitCode 4
+        Throw-AgentLocalCi -Message "AgentLocalCI 0.2 fails closed when any unsafe capability is enabled" -ExitCode 4
     }
     $environmentSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($name in @(ConvertTo-AgentLocalCiStringArray -Value $Policy.allowed_environment_names -Context "allowed_environment_names" -AllowEmpty)) {

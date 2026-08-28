@@ -155,7 +155,7 @@ function Get-AgentLocalCiSafeFullPath {
     }
     $full = [IO.Path]::GetFullPath($Path)
     $root = [IO.Path]::GetPathRoot($full)
-    if ($full.Equals($root, [StringComparison]::OrdinalIgnoreCase)) { return $root }
+    if (Test-AgentLocalCiPathEquals $full $root) { return $root }
     return $full.TrimEnd([char[]]@('\', '/'))
 }
 
@@ -169,8 +169,8 @@ function Test-AgentLocalCiPathContained {
     $root = Get-AgentLocalCiSafeFullPath -Path $Parent
     $separator = [IO.Path]::DirectorySeparatorChar
     $prefix = if ($root.EndsWith([string]$separator, [StringComparison]::Ordinal)) { $root } else { "$root$separator" }
-    return $child.Equals($root, [StringComparison]::OrdinalIgnoreCase) -or
-        $child.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
+    $comparison = Get-AgentLocalCiPathComparison
+    return $child.Equals($root, $comparison) -or $child.StartsWith($prefix, $comparison)
 }
 
 function Assert-AgentLocalCiNoReparseAncestor {
@@ -185,13 +185,13 @@ function Assert-AgentLocalCiNoReparseAncestor {
                 Throw-AgentLocalCi -Message "AgentLocalCI refuses a reparse point or junction ancestor: $cursor" -ExitCode 4
             }
         }
-        if ($cursor.Equals($root, [StringComparison]::OrdinalIgnoreCase)) { break }
-        $parent = Split-Path -Parent $cursor
-        if ([string]::IsNullOrWhiteSpace($parent)) {
+        if (Test-AgentLocalCiPathEquals $cursor $root) { break }
+        $parentInfo = [IO.Directory]::GetParent($cursor)
+        if ($null -eq $parentInfo) {
             Throw-AgentLocalCi -Message "Could not reach the filesystem root while validating path ancestors" -ExitCode 4
         }
-        $parentFull = [IO.Path]::GetFullPath($parent)
-        $cursor = if ($parentFull.Equals($root, [StringComparison]::OrdinalIgnoreCase)) {
+        $parentFull = [IO.Path]::GetFullPath($parentInfo.FullName)
+        $cursor = if (Test-AgentLocalCiPathEquals $parentFull $root) {
             $root
         }
         else {
@@ -205,7 +205,7 @@ function Assert-AgentLocalCiPathIsNarrow {
 
     $full = Get-AgentLocalCiSafeFullPath -Path $Path
     $root = [IO.Path]::GetPathRoot($full)
-    if ($full.Equals($root, [StringComparison]::OrdinalIgnoreCase)) {
+    if (Test-AgentLocalCiPathEquals $full $root) {
         Throw-AgentLocalCi -Message "AgentLocalCI refuses a filesystem root as a mutation boundary" -ExitCode 4
     }
     $relative = $full.Substring($root.Length).Trim([char[]]@('\', '/'))
@@ -296,7 +296,7 @@ function ConvertFrom-AgentLocalCiJsonYaml {
 
     $trimmed = $Text.TrimStart()
     if (-not $trimmed.StartsWith("{", [StringComparison]::Ordinal)) {
-        Throw-AgentLocalCi -Message "$SourceName must use JSON-compatible YAML in AgentLocalCI 0.1. JSON is valid YAML 1.2; arbitrary YAML syntax is not yet accepted." -ExitCode 2
+        Throw-AgentLocalCi -Message "$SourceName must use JSON-compatible YAML in AgentLocalCI 0.2. JSON is valid YAML 1.2; arbitrary YAML syntax is not yet accepted." -ExitCode 2
     }
     try {
         return ($Text | ConvertFrom-Json -Depth 100)

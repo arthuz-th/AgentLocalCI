@@ -7,6 +7,8 @@ $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $cliPath = Join-Path $repoRoot "bin\agentlocalci.ps1"
 $testHome = Join-Path ([IO.Path]::GetTempPath()) ("agentlocalci-integration-" + [Guid]::NewGuid().ToString("N"))
 $createdVolumes = [Collections.Generic.List[string]]::new()
+$dockerCommand = (Get-Command docker -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$pwshCommand = (Get-Command pwsh -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $passed = 0
 $failed = 0
 $failures = [Collections.Generic.List[string]]::new()
@@ -20,14 +22,14 @@ function Invoke-DockerCommand {
         [Parameter(Mandatory = $true)][string[]]$Arguments,
         [switch]$AllowFailure
     )
-    $output = @(& docker.exe @Arguments 2>&1 | ForEach-Object { [string]$_ })
+    $output = @(& $dockerCommand @Arguments 2>&1 | ForEach-Object { [string]$_ })
     $exitCode = $LASTEXITCODE
     if (-not $AllowFailure -and $exitCode -ne 0) { throw "docker $($Arguments -join ' ') failed with exit $exitCode" }
     return [pscustomobject]@{ ExitCode = $exitCode; Output = $output }
 }
 
 function Invoke-Clean {
-    $output = @(& pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $cliPath clean --wait-seconds 1 --home $testHome --repository $repoRoot 2>&1 | ForEach-Object { [string]$_ })
+    $output = @(& $pwshCommand -NoLogo -NoProfile -NonInteractive -File $cliPath clean --wait-seconds 1 --home $testHome --repository $repoRoot 2>&1 | ForEach-Object { [string]$_ })
     return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $output }
 }
 
@@ -74,7 +76,7 @@ function Test-Case([string]$Name, [scriptblock]$Body) {
 }
 
 try {
-    if (-not (Get-Command docker.exe -ErrorAction SilentlyContinue)) { throw "docker.exe is required" }
+    if (-not (Test-Path -LiteralPath $dockerCommand -PathType Leaf)) { throw "docker is required" }
     [IO.Directory]::CreateDirectory($testHome) | Out-Null
 
     $unrelatedVolume = "alc-integration-unrelated-" + [Guid]::NewGuid().ToString("N").Substring(0, 12)

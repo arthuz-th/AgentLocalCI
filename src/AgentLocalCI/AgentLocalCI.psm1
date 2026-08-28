@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
 
 $script:AgentLocalCiModuleRoot = $PSScriptRoot
-$script:AgentLocalCiVersion = "0.1.0-alpha.1"
+$script:AgentLocalCiVersion = "0.2.0-beta.1"
 $script:AgentLocalCiSchemaVersion = 1
 $script:AgentLocalCiOwnerLabel = "agentlocalci"
 $script:AgentLocalCiBoundaryMarker = "unprivileged-linux-container"

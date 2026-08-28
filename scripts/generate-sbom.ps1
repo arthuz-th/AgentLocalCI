@@ -14,7 +14,7 @@ $temporaryOutput = "$resolvedOutput.$([Guid]::NewGuid().ToString('N')).tmp"
 
 $process = [Diagnostics.Process]::new()
 $process.StartInfo = [Diagnostics.ProcessStartInfo]::new()
-$process.StartInfo.FileName = "docker.exe"
+$process.StartInfo.FileName = (Get-Command docker -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $process.StartInfo.UseShellExecute = $false
 $process.StartInfo.CreateNoWindow = $true
 $process.StartInfo.RedirectStandardOutput = $true

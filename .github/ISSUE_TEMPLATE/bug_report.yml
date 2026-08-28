@@ -9,22 +9,22 @@ body:
   - type: input
     id: version
     attributes:
-      label: AgentLocalCI version and commit
-      placeholder: "0.1.0-alpha.1 / 40-character SHA"
+      label: AgentLocalCI version and exact commit
+      placeholder: "0.2.0-beta.1 / exact 40-character SHA"
     validations:
       required: true
   - type: textarea
     id: environment
     attributes:
       label: Environment
-      description: Windows, PowerShell, Git, Docker Desktop, Docker Engine, CPU, memory, and free disk.
+      description: Host OS/version, CPU architecture, PowerShell, Git, Docker Desktop/Engine, Docker architecture, memory, and free disk.
     validations:
       required: true
   - type: textarea
     id: reproduce
     attributes:
       label: Minimal reproduction
-      description: Exact sanitized commands and a minimal public fixture.
+      description: Exact sanitized commands and a minimal public fixture. State whether a physical Mac or only an ARM64/Linux contract environment was used.
     validations:
       required: true
   - type: textarea

@@ -6,6 +6,16 @@ function Invoke-AgentLocalCiDocker {
     return Invoke-AgentLocalCiNative -FilePath (Get-AgentLocalCiDockerPath) -Arguments $Arguments -AllowFailure:$AllowFailure -Environment @{ DOCKER_CLI_HINTS = "false" }
 }
 
+function Get-AgentLocalCiDockerArchitecture {
+    $value = (Invoke-AgentLocalCiDocker @("info", "--format", "{{.Architecture}}" )).Text.Trim().ToLowerInvariant()
+    $architecture = switch ($value) {
+        { $_ -in @("amd64", "x86_64") } { "amd64" }
+        { $_ -in @("arm64", "aarch64") } { "arm64" }
+        default { Throw-AgentLocalCi -Message "Docker architecture '$value' is unsupported; AgentLocalCI requires amd64 or arm64" -ExitCode 3 }
+    }
+    return $architecture
+}
+
 function ConvertFrom-AgentLocalCiSingleInspection {
     param(
         [Parameter(Mandatory = $true)][string]$Text,
@@ -63,21 +73,40 @@ function Initialize-AgentLocalCiTrustedBuildContext {
 function Get-AgentLocalCiTrustedImage {
     param([Parameter(Mandatory = $true)][object]$Context)
     $build = Initialize-AgentLocalCiTrustedBuildContext $Context
+    $expectedArchitecture = Get-AgentLocalCiDockerArchitecture
     $existing = Invoke-AgentLocalCiDocker @("image", "inspect", $build.Tag) -AllowFailure
-    if ($existing.ExitCode -ne 0) {
+    $mustBuild = $existing.ExitCode -ne 0
+    if (-not $mustBuild) {
+        try {
+            $existingInspection = ConvertFrom-AgentLocalCiSingleInspection $existing.Text "image"
+            $mustBuild = [string]$existingInspection.Architecture -cne $expectedArchitecture
+        }
+        catch { $mustBuild = $true }
+    }
+    if ($mustBuild) {
         $arguments = @("image", "build", "--pull=false", "--tag", $build.Tag, "--label", "io.agentlocalci.identity=$($build.Identity)", $build.Directory)
         Invoke-AgentLocalCiDocker $arguments | Out-Null
     }
     $inspection = ConvertFrom-AgentLocalCiSingleInspection (Invoke-AgentLocalCiDocker @("image", "inspect", $build.Tag)).Text "image"
     $failures = New-Object System.Collections.Generic.List[string]
     if ([string]$inspection.Id -cnotmatch '^sha256:[0-9a-f]{64}$') { $failures.Add("invalid immutable image ID") }
+    if ([string]$inspection.Os -cne "linux") { $failures.Add("image OS is not linux") }
+    if ([string]$inspection.Architecture -cne $expectedArchitecture) { $failures.Add("image architecture does not match the Docker server") }
     if ([string]$inspection.Config.User -cne $script:AgentLocalCiContainerUid) { $failures.Add("image user is not 10001:10001") }
     if ([string]$inspection.Config.Labels."io.agentlocalci.owner" -cne $script:AgentLocalCiOwnerLabel) { $failures.Add("owner label mismatch") }
     if ([string]$inspection.Config.Labels."io.agentlocalci.boundary" -cne $script:AgentLocalCiBoundaryMarker) { $failures.Add("boundary label mismatch") }
     if ([string]$inspection.Config.Labels."io.agentlocalci.identity" -cne $build.Identity) { $failures.Add("controller identity label mismatch") }
+    if ([string]$inspection.Config.Labels."io.agentlocalci.arch" -cne $expectedArchitecture) { $failures.Add("architecture label mismatch") }
     if (@($inspection.Config.Entrypoint).Count -ne 1 -or [string]$inspection.Config.Entrypoint[0] -cne "/opt/agentlocalci/entrypoint.sh") { $failures.Add("entrypoint mismatch") }
     if ($failures.Count -gt 0) { Throw-AgentLocalCi -Message "Trusted image inspection failed: $($failures -join '; ')" -ExitCode 4 }
-    return [pscustomobject]@{ Id = [string]$inspection.Id; Tag = $build.Tag; Identity = $build.Identity; BuiltAt = [string]$inspection.Created }
+    return [pscustomobject]@{
+        Id = [string]$inspection.Id
+        Tag = $build.Tag
+        Identity = $build.Identity
+        BuiltAt = [string]$inspection.Created
+        Architecture = [string]$inspection.Architecture
+        Os = [string]$inspection.Os
+    }
 }
 
 function New-AgentLocalCiDockerVolume {

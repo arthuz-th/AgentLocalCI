@@ -13,6 +13,7 @@ function Is-Ignored([string]$Path) { return $Path -match '[/\\](?:\.git|\.test-t
 $required = @(
     "README.md", "LICENSE", "NOTICE", "SECURITY.md", "THREAT_MODEL.md", "CONTRIBUTING.md",
     "CODE_OF_CONDUCT.md", "GOVERNANCE.md", "SUPPORT.md", "CHANGELOG.md",
+    "docs/why-local-ci.md", "docs/macos.md", "docs/installing.md", "docs/limitations.md",
     "schemas/pipeline.schema.json", "schemas/policy.schema.json", "schemas/report.schema.json",
     ".agentlocalci/pipeline.yml"
 )

@@ -21,4 +21,4 @@ Preparation uses the committed wrapper, a trusted init script, a bounded worker 
 
 ## Limitations
 
-Redirects and CDN hosts must be listed exactly in both project configuration and machine policy. Wildcards, IP literals, HTTP, non-443 ports, private registries, credentials, and IPv6 destinations are unsupported in 0.1.
+Redirects and CDN hosts must be listed exactly in both project configuration and machine policy. Wildcards, IP literals, HTTP, non-443 ports, private registries, credentials, and IPv6 destinations are unsupported in 0.2.

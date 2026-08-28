@@ -4,10 +4,11 @@ function Get-AgentLocalCiRepositoryRoot {
     $full = Get-AgentLocalCiSafeFullPath $candidate
     if (-not (Test-Path -LiteralPath $full -PathType Container)) { Throw-AgentLocalCi -Message "Repository does not exist: $full" -ExitCode 2 }
     $git = Get-AgentLocalCiGitPath
-    $probe = Invoke-AgentLocalCiNative -FilePath $git -Arguments @("--no-pager", "--no-replace-objects", "-c", "core.hooksPath=NUL", "-c", "core.attributesFile=NUL", "-C", $full, "rev-parse", "--show-toplevel") -AllowFailure -Environment @{ GIT_CONFIG_NOSYSTEM = "1"; GIT_CONFIG_GLOBAL = "NUL"; GIT_TERMINAL_PROMPT = "0"; GIT_OPTIONAL_LOCKS = "0" } -RemoveEnvironmentPrefixes @("GIT_")
+    $nullDevice = Get-AgentLocalCiNullDevice
+    $probe = Invoke-AgentLocalCiNative -FilePath $git -Arguments @("--no-pager", "--no-replace-objects", "-c", "core.hooksPath=$nullDevice", "-c", "core.attributesFile=$nullDevice", "-C", $full, "rev-parse", "--show-toplevel") -AllowFailure -Environment @{ GIT_CONFIG_NOSYSTEM = "1"; GIT_CONFIG_GLOBAL = $nullDevice; GIT_TERMINAL_PROMPT = "0"; GIT_OPTIONAL_LOCKS = "0" } -RemoveEnvironmentPrefixes @("GIT_")
     if ($probe.ExitCode -ne 0) { Throw-AgentLocalCi -Message "RepositoryRoot is not a Git worktree: $full" -ExitCode 2 }
     $top = Get-AgentLocalCiSafeFullPath ($probe.Lines | Select-Object -First 1)
-    if (-not $top.Equals($full, [StringComparison]::OrdinalIgnoreCase)) { Throw-AgentLocalCi -Message "RepositoryRoot must be the Git worktree root: $top" -ExitCode 2 }
+    if (-not (Test-AgentLocalCiPathEquals $top $full)) { Throw-AgentLocalCi -Message "RepositoryRoot must be the Git worktree root: $top" -ExitCode 2 }
     return $full
 }
 

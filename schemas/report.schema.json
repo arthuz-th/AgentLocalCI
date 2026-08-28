@@ -3,7 +3,7 @@
   "$id": "https://github.com/arthuz-th/AgentLocalCI/raw/main/schemas/report.schema.json",
   "title": "AgentLocalCI run report",
   "type": "object",
-  "required": ["schema_version", "tool", "run_id", "project", "target_sha", "target_tree", "profile", "result", "exit_code", "started_utc", "finished_utc", "duration_seconds", "stages", "provenance", "fingerprints", "image", "security", "cleanup", "error"],
+  "required": ["schema_version", "tool", "host", "run_id", "project", "target_sha", "target_tree", "profile", "result", "exit_code", "started_utc", "finished_utc", "duration_seconds", "stages", "provenance", "fingerprints", "image", "security", "cleanup", "error"],
   "properties": {
     "schema_version": { "const": 1 },
     "tool": {
@@ -13,6 +13,15 @@
         "name": { "const": "AgentLocalCI" },
         "version": { "type": "string" },
         "controller_identity": { "type": "string", "pattern": "^[0-9a-f]{20}$" }
+      }
+    },
+    "host": {
+      "type": "object",
+      "required": ["platform", "architecture", "powershell"],
+      "properties": {
+        "platform": { "enum": ["windows", "macos", "linux"] },
+        "architecture": { "type": "string", "minLength": 1 },
+        "powershell": { "type": "string", "minLength": 1 }
       }
     },
     "run_id": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{9}-[0-9a-f]{12}$" },
@@ -59,7 +68,23 @@
     },
     "provenance": { "type": "object" },
     "fingerprints": { "type": "object" },
-    "image": { "type": ["object", "null"] },
+    "image": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["id", "tag", "identity", "built_at", "architecture", "os"],
+          "properties": {
+            "id": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+            "tag": { "type": "string" },
+            "identity": { "type": "string", "pattern": "^[0-9a-f]{20}$" },
+            "built_at": { "type": "string" },
+            "architecture": { "enum": ["amd64", "arm64"] },
+            "os": { "const": "linux" }
+          }
+        }
+      ]
+    },
     "security": { "type": "object" },
     "cleanup": {
       "type": "object",

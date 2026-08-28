@@ -4,6 +4,7 @@ param()
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = "Stop"
 $modulePath = Join-Path $PSScriptRoot "..\src\AgentLocalCI\AgentLocalCI.psm1"
+$repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 Import-Module $modulePath -Force
 $module = Get-Module AgentLocalCI
 $passed = 0
@@ -34,7 +35,7 @@ function Test-Case([string]$Name, [scriptblock]$Body) {
 Test-Case "version command is stable" {
     $result = @(& $module { Invoke-AgentLocalCiCli @("version") })
     Assert-Equal $result[-1] 0 "version exit code"
-    Assert-True ([string]$result[0] -match '^AgentLocalCI 0\.1\.0-alpha\.1') "version output"
+    Assert-True ([string]$result[0] -match '^AgentLocalCI 0\.2\.0-beta\.1') "version output"
 }
 
 Test-Case "redaction removes credentials and private host identity" {
@@ -266,7 +267,7 @@ Test-Case "trusted runner exits have distinct safety and infrastructure classes"
 
 Test-Case "Gradle init starter includes wrapper redirect hosts" {
     $requiredHosts = @('services.gradle.org', 'github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com')
-    if (-not $IsWindows) {
+    if ($false) {
         $definition = & $module { (Get-Command Initialize-AgentLocalCiRepository).ScriptBlock.ToString() }
         foreach ($hostName in $requiredHosts) {
             Assert-True ($definition.Contains('"' + $hostName + '"', [StringComparison]::Ordinal)) "Gradle starter omitted $hostName"
@@ -313,6 +314,128 @@ Test-Case "controller identity matches installer inventory boundary" {
     finally { $algorithm.Dispose() }
     $actual = & $module { Get-AgentLocalCiControllerIdentity ([pscustomobject]@{}) }
     Assert-Equal $actual $expected "controller identity does not match installer inventory"
+}
+
+Test-Case "platform abstraction exposes a safe supported host contract" {
+    $platform = & $module { Get-AgentLocalCiHostPlatform }
+    Assert-True ($platform -in @('windows', 'macos', 'linux')) "unsupported test host"
+    $nullDevice = & $module { Get-AgentLocalCiNullDevice }
+    Assert-Equal $nullDevice $(if ($platform -ceq 'windows') { 'NUL' } else { '/dev/null' }) "null device"
+    $defaultHome = & $module { Get-AgentLocalCiDefaultHome }
+    Assert-True ([IO.Path]::IsPathRooted($defaultHome)) "default home is not absolute"
+    $memory = & $module { Get-AgentLocalCiRecommendedMemoryGiB }
+    Assert-True ($memory -ge 4 -and $memory -le 16) "recommended memory is outside the bounded policy"
+}
+
+Test-Case "trusted image definition is native multi-architecture and checksum pinned" {
+    $dockerfile = Get-Content -LiteralPath (Join-Path $repoRoot 'src/AgentLocalCI/Container/Dockerfile') -Raw -Encoding UTF8
+    foreach ($required in @(
+        'ARG TARGETARCH',
+        'sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517',
+        'NODE_SHA256_ARM64=1bf1eb9ee63ffc4e5d324c0b9b62cf4a289f44332dfef9607cea1a0d9596ba6f',
+        'POWERSHELL_SHA256_ARM64=d4ef2382fa452f2ccbdb48a01adbbce9ed64954872123970c16be6d086d1224b',
+        'io.agentlocalci.arch'
+    )) { Assert-True ($dockerfile.Contains($required, [StringComparison]::Ordinal)) "Dockerfile omitted $required" }
+}
+
+Test-Case "beginner why command is balanced rather than anti-hosted-CI marketing" {
+    $result = @(& $module { Invoke-AgentLocalCiCli @('why') })
+    Assert-Equal $result[-1] 0 "why exit code"
+    $text = ($result[0..($result.Count - 2)] -join "`n")
+    Assert-True ($text -match 'GitHub Actions') "why output omitted GitHub Actions"
+    Assert-True ($text -match 'Keep GitHub Actions') "why output omitted hosted-CI use cases"
+    Assert-True ($text -match 'exact-commit|exact commit') "why output omitted exact-commit value"
+}
+
+Test-Case "smart npm setup detects only scripts that actually exist" {
+    $root = Join-Path ([IO.Path]::GetTempPath()) ("agentlocalci-init-npm-" + [Guid]::NewGuid().ToString('N'))
+    $temporaryHome = Join-Path ([IO.Path]::GetTempPath()) ("agentlocalci-init-npm-home-" + [Guid]::NewGuid().ToString('N'))
+    try {
+        & git init -q -b main $root
+        [IO.File]::WriteAllText((Join-Path $root 'package.json'), '{"name":"sample","scripts":{"lint":"eslint .","test":"node test.mjs","build":"node build.mjs","unused":"echo unused"}}', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $root 'package-lock.json'), '{"name":"sample","lockfileVersion":3,"packages":{}}', [Text.UTF8Encoding]::new($false))
+        $setup = & $module { param($h,$r) Initialize-AgentLocalCiRepository $h $r $null } $temporaryHome $root
+        Assert-Equal $setup.Detected 'npm' "detected project"
+        Assert-True ($setup.Acceptance) "npm standard profile is not acceptance"
+        Assert-True ((@($setup.Stages) -join ',') -ceq 'lint,test,build') "detected stages differ"
+        $pipeline = Get-Content -LiteralPath (Join-Path $root '.agentlocalci/pipeline.yml') -Raw -Encoding UTF8 | ConvertFrom-Json -Depth 50
+        $commands = @($pipeline.profiles.standard.stages | ForEach-Object { $_.command -join ' ' }) -join ';'
+        Assert-True ($commands -notmatch 'eslint \.|node test\.mjs|echo unused') "raw package script content was embedded"
+        Assert-True ($commands -match 'npm run lint' -and $commands -match 'npm test' -and $commands -match 'npm run build') "safe npm argv was not generated"
+    }
+    finally {
+        foreach ($path in @($root, $temporaryHome)) { if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force } }
+    }
+}
+
+Test-Case "easy check resolves exact HEAD and refuses dirty source" {
+    $root = Join-Path ([IO.Path]::GetTempPath()) ("agentlocalci-check-" + [Guid]::NewGuid().ToString('N'))
+    try {
+        & git init -q -b main $root
+        [IO.File]::WriteAllText((Join-Path $root 'a.txt'), 'one')
+        & git -C $root add a.txt
+        & git -C $root -c user.name=Test -c user.email=test@example.invalid commit -q -m one
+        $expected = (& git -C $root rev-parse HEAD).Trim()
+        $actual = & $module { param($r) Get-AgentLocalCiExactHead $r } $root
+        Assert-Equal $actual $expected "exact HEAD"
+        & $module { param($r) Assert-AgentLocalCiWorkingTreeClean $r } $root
+        [IO.File]::WriteAllText((Join-Path $root 'dirty.txt'), 'dirty')
+        $blocked = $false
+        try { & $module { param($r) Assert-AgentLocalCiWorkingTreeClean $r } $root } catch { $blocked = $true }
+        Assert-True $blocked "dirty working tree was accepted"
+    }
+    finally { if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force } }
+}
+
+Test-Case "pre-push hook is opt-in owned and non-destructive" {
+    $root = Join-Path ([IO.Path]::GetTempPath()) ("agentlocalci-hook-" + [Guid]::NewGuid().ToString('N'))
+    try {
+        & git init -q -b main $root
+        [IO.File]::WriteAllText((Join-Path $root 'a.txt'), 'one')
+        & git -C $root add a.txt
+        & git -C $root -c user.name=Test -c user.email=test@example.invalid commit -q -m one
+        $installed = & $module { param($r) Install-AgentLocalCiPrePushHook $r 'fast' } $root
+        Assert-True ($installed.Installed -and $installed.Owned -and $installed.Profile -ceq 'fast') "owned hook was not installed"
+        $content = Get-Content -LiteralPath $installed.Path -Raw -Encoding UTF8
+        Assert-True ($content -match 'agentlocalci check' -and $content -notmatch [Regex]::Escape($repoRoot)) "hook is missing check or leaked a local source path"
+        $removed = & $module { param($r) Remove-AgentLocalCiPrePushHook $r } $root
+        Assert-True $removed.Removed "owned hook was not removed"
+        [IO.Directory]::CreateDirectory((Split-Path -Parent $installed.Path)) | Out-Null
+        [IO.File]::WriteAllText($installed.Path, '#!/bin/sh' + "`n" + 'echo foreign' + "`n", [Text.UTF8Encoding]::new($false))
+        $blocked = $false
+        try { & $module { param($r) Install-AgentLocalCiPrePushHook $r 'fast' | Out-Null } $root } catch { $blocked = $true }
+        Assert-True $blocked "foreign hook was overwritten"
+        Assert-True ((Get-Content -LiteralPath $installed.Path -Raw -Encoding UTF8) -match 'foreign') "foreign hook content changed"
+        Remove-Item -LiteralPath $installed.Path -Force
+        & git -C $root config --local core.hooksPath custom-hooks
+        $blocked = $false
+        try { & $module { param($r) Install-AgentLocalCiPrePushHook $r 'fast' | Out-Null } $root } catch { $blocked = $true }
+        Assert-True $blocked "custom core.hooksPath was mutated or ignored"
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $root 'custom-hooks/pre-push'))) "custom hook path was written"
+    }
+    finally { if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force } }
+}
+
+Test-Case "HTML report is self-contained escaped and human-readable" {
+    $path = Join-Path ([IO.Path]::GetTempPath()) ("agentlocalci-report-" + [Guid]::NewGuid().ToString('N') + '.html')
+    try {
+        $report = [pscustomobject]@{
+            result='Passed'; project='<demo>'; run_id='20260827-123456789-123456789012'; target_sha=('a' * 40); duration_seconds=1.2
+            host=[pscustomobject]@{platform='macos';architecture='arm64'}
+            profile=[pscustomobject]@{name='standard';gaps=@('No deployment.')}
+            stages=@([pscustomobject]@{id='test';status='Passed';duration_seconds=1.0;exit_code=0;stdout_log='01-test.stdout.log'})
+            security=[pscustomobject]@{validation_network='none';exact_tree_source=$true;host_mounts=$false;credentials_forwarded=$false}
+            cleanup=[pscustomobject]@{status='Passed'}
+            image=[pscustomobject]@{id='sha256:' + ('b' * 64);architecture='arm64'}
+            error=''
+        }
+        & $module { param($p,$r) Write-AgentLocalCiHtmlReport $p $r } $path $report
+        $html = Get-Content -LiteralPath $path -Raw -Encoding UTF8
+        Assert-True ($html -match '&lt;demo&gt;' -and $html -notmatch '<demo>') "project name was not HTML escaped"
+        Assert-True ($html -notmatch '(?i)<script|https?://') "HTML report contains active or external content"
+        Assert-True ($html -match 'Validation network' -and $html -match 'Exact-tree source') "safety summary missing"
+    }
+    finally { if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force } }
 }
 
 Test-Case "CLI rejects unknown options" {

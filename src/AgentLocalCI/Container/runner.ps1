@@ -54,10 +54,11 @@ function New-ChildStartInfo([string]$FilePath, [string[]]$Arguments, [string]$Wo
         CI = 'true'
         LANG = 'C.UTF-8'
         LC_ALL = 'C.UTF-8'
-        JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
+        JAVA_HOME = '/opt/java-home'
         ANDROID_HOME = '/opt/android-sdk'
         ANDROID_SDK_ROOT = '/opt/android-sdk'
         NEXT_TELEMETRY_DISABLED = '1'
+        NPM_CONFIG_UPDATE_NOTIFIER = 'false'
         AGENTLOCALCI_EXECUTION_BOUNDARY = 'unprivileged-linux-container'
         AGENTLOCALCI_ARTIFACT_ROOT = '/evidence'
     }
@@ -200,5 +201,6 @@ if ($needs -contains 'gradle' -and [IO.Path]::GetFileName($executable) -ceq 'gra
     $arguments += "--max-workers=$([int]$job.gradle_max_workers)"
 }
 
-$exitCode = Get-ExternalChildExitCode (Invoke-Child $executable $arguments $workingDirectory ([pscustomobject]$childEnvironment))
+$exitCode = Get-ExternalChildExitCode (Invoke-Child $executable $arguments $workingDirectory ([pscustomobject]$childEnvironment)
+)
 exit $exitCode

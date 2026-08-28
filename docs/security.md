@@ -2,37 +2,40 @@
 
 ## Host isolation
 
-Validation receives no host bind mount. Source is reconstructed inside Docker from a minimal exact-tree Git pack. A trusted seed verifies the commit/tree and removes temporary Git metadata before validation; target stages receive no `.git` directory. Containers have no Docker socket, device, published port, credential helper, SSH agent, `.env`, user profile, or unrelated checkout.
+Validation receives no host bind mount. Source is reconstructed inside Docker from a minimal exact-tree Git pack. A trusted seed verifies the commit/tree and removes temporary Git metadata before validation; target stages receive no `.git` directory. Containers receive no Docker socket, device, published port, credential helper, SSH agent, `.env`, user profile, or unrelated checkout.
 
-The runtime is non-root, read-only, capability-free, and protected by `no-new-privileges`. Every container is inspected before it starts; a mismatch is a safety failure. The trusted runner resolves working directories, lockfiles, Gradle wrappers, and relative executables to canonical paths inside the exact-tree mount, so a committed symbolic link cannot redirect those controller-selected paths outside the repository.
+The runtime is non-root, read-only, capability-free, and protected by `no-new-privileges`. Every container is inspected before start. The runner resolves working directories, lockfiles, wrappers, and relative executables canonically inside the exact-tree mount, so committed symbolic links cannot redirect controller-selected paths outside source.
 
 ## Network isolation
 
-Validation stages use Docker `network=none`.
+Validation always uses Docker `network=none`.
 
-Dependency preparation uses two networks by design:
+Dependency preparation uses a run-private internal network. Fetch containers reach only the trusted proxy; the proxy also has Docker bridge egress. It accepts exact hostname HTTPS CONNECT on port 443, resolves IPv4 itself, rejects private/special ranges, and connects to the resolved address. Arbitrary HTTP, wildcard domains, IP literals, credentials, IPv6 destinations, and non-443 ports are unsupported.
 
-- fetch containers: only the per-run internal isolated network;
-- trusted proxy: the internal network plus Docker's default bridge for egress.
-
-The proxy supports exact hostname HTTPS CONNECT on port 443, resolves IPv4 A records itself, rejects private/special address ranges, and connects to the resolved address to reduce DNS-rebinding ambiguity. It does not support arbitrary HTTP forwarding, IP-literal targets, wildcard domains, or non-443 ports.
-
-A network probe must fail to reach the allowlisted host directly, public resolver IPs, Docker host aliases, link-local metadata, private gateways, and common Docker daemon ports while succeeding through the proxy.
+A probe must fail to reach the allowlisted host directly, public resolver IPs, host aliases, metadata, private gateways, and common Docker daemon ports while succeeding through the proxy.
 
 ## Secrets
 
-AgentLocalCI is secretless by default. Environment names associated with credentials are denied, known token formats are rejected, inherited sensitive environment variables are removed, Git prompting is disabled, and logs are redacted before persistence.
+AgentLocalCI is secretless by default. Credential-like environment names are denied, representative token formats are rejected, inherited sensitive variables are removed, Git prompting is disabled, and logs are redacted before persistence.
 
-Secret detection is defense in depth, not proof. Do not commit secrets or run secret-requiring tests in 0.1.
+Secret detection is defense in depth, not proof. Never commit secrets or use AgentLocalCI for tests that require credentials.
 
-## Provenance
+## Provenance and beginner safety
 
-Only an exact local commit SHA is accepted. The controller records target commit, tree, object count, pack digest, pipeline digest, policy digest, controller identity, trusted image ID, and a hash of the repository path. The raw personal path is not written to the report.
+Advanced runs accept only an exact local commit SHA. `check` and `quickstart` additionally require a clean tree before resolving exact HEAD. Automatic npm setup invokes detected script names by argv; it does not copy script bodies into pipeline commands. Optional automatic commit is limited to the generated pipeline as the sole change.
+
+Reports record commit/tree, pack digest, pipeline/policy/controller/image fingerprints, host/image architecture, and a hash—not the raw value—of the repository path.
+
+## Installer and hook ownership
+
+Install roots must be narrow and free of symlink/reparse ancestors. Existing controller identities are inventory-verified before reuse. Unix PATH edits are bounded by exact AgentLocalCI markers. Uninstall requires the product manifest and preserves backups.
+
+The pre-push hook manager refuses to overwrite or remove a hook without the AgentLocalCI owner marker.
 
 ## Cleanup
 
-Run state and Docker inspection must agree on type, exact name, owner, run, and kind. Cleanup distinguishes absence from inspection failure and verifies absence after deletion. A dead controller may be recovered only after process ID and start time no longer identify a live process.
+State and Docker inspection must agree on type, exact name, owner, run, and kind. Cleanup distinguishes absence from inspection failure and verifies absence after deletion. Dead-controller recovery also checks process ID and start time.
 
 ## Remaining risk
 
-The Docker daemon and current Windows account are privileged parts of the trusted host boundary. Dependency publishers remain a supply-chain risk. Resource limits reduce but cannot eliminate denial of service or side channels.
+The current local account, host administrator, Docker daemon operator, and host kernel are privileged trusted components. Dependency publishers remain a supply-chain risk. Resource limits reduce but cannot eliminate denial of service or side channels. A local pass is not independent verification away from the contributor machine.

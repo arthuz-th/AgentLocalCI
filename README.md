@@ -1,184 +1,195 @@
 # AgentLocalCI
 
-**Local-first, exact-commit CI for Windows and Docker Desktop.**
+**Run exact-commit CI on your own Windows, macOS, or Linux machine—without sending routine jobs to GitHub Actions.**
 
-AgentLocalCI runs repository-defined checks on your own machine without sending the job to GitHub Actions. It packages one exact local Git tree, executes stages in fresh locked-down Linux containers, writes a local report, and removes every run-owned Docker resource it can prove it owns.
+AgentLocalCI is designed for developers who want a simple local quality gate without learning CI syntax first. It detects common npm or Gradle checks, runs one committed Git tree inside locked-down Linux containers, creates readable reports, and cleans up only Docker resources it can prove it owns.
 
-> Status: **0.1 alpha**. The security boundary and supported workflows are intentionally narrow. Read [THREAT_MODEL.md](THREAT_MODEL.md) and [docs/limitations.md](docs/limitations.md) before using it as an acceptance gate.
+> **Version 0.2 beta.** Windows is supported. macOS and Linux host support is beta. The security boundary is intentionally narrower than a general-purpose hosted runner.
 
-## What it is
+## The beginner path
 
-- An on-demand CLI named `agentlocalci`.
-- A local CI controller for an **exact lowercase 40-character commit SHA** already present in your local Git object database.
-- A Windows-hosted controller that uses Docker Desktop with Linux containers.
-- A safe-by-default way to run deterministic lint, test, typecheck, and build commands locally.
-- A local report and cleanup system with explicit acceptance versus diagnostic-only profiles.
+### 1. Install prerequisites
 
-## What it is not
+You need PowerShell 7.4+, Git, and a running Linux Docker engine.
 
-- It is **not** a GitHub Actions self-hosted runner.
-- It does not listen for webhooks, public pull requests, or remote commands.
-- It does not fetch branches, tags, or missing commits.
-- It does not forward Git credentials, cloud credentials, SSH agents, Docker sockets, host directories, or personal files.
-- It does not approve a merge, deployment, release, or production change by itself.
-- It is not yet a universal replacement for every operating system, toolchain, service container, or integration test.
+**Windows:** install Git, PowerShell 7, and Docker Desktop using Linux containers.
 
-## Why use it
+**macOS:**
 
-For private repositories, GitHub-hosted Actions jobs consume the plan's included minutes and can become billable after the allowance. AgentLocalCI runs outside GitHub Actions, so routine AgentLocalCI runs do not consume GitHub Actions minutes or GitHub-hosted runner charges. Your own electricity, hardware, disk, Docker image downloads, and dependency network traffic still have real costs.
+```bash
+brew install powershell
+brew install --cask docker
+```
 
-For public repositories, GitHub's standard hosted runners are already free and unlimited. AgentLocalCI can still be useful there for exact-commit local gates, offline validation stages, privacy, reproducibility, and keeping untrusted project code away from host files.
+Open Docker Desktop once and wait until `docker info` works.
 
-See [docs/billing.md](docs/billing.md) for precise wording and official GitHub references.
+### 2. Install AgentLocalCI
+
+```powershell
+git clone https://github.com/arthuz-th/AgentLocalCI.git
+cd AgentLocalCI
+pwsh -NoProfile -File ./install.ps1
+```
+
+Open a new terminal after the installer updates PATH.
+
+### 3. Run one guided command inside your project
+
+```powershell
+cd /path/to/your/project
+agentlocalci quickstart --commit --open
+```
+
+That command:
+
+1. checks PowerShell, Git, Docker, disk, policy, image, network isolation, and cleanup;
+2. detects useful npm scripts or a committed Gradle wrapper;
+3. creates `.agentlocalci/pipeline.yml`;
+4. with `--commit`, creates one narrow commit containing only that file;
+5. validates the resulting exact commit;
+6. opens a self-contained HTML report.
+
+AgentLocalCI refuses `--commit` when any other file is changed or staged.
+
+## Everyday use
+
+```powershell
+agentlocalci check
+```
+
+`check` resolves the current full 40-character `HEAD` automatically. It refuses a dirty working tree, so the report always names immutable committed source rather than an ambiguous folder state.
+
+Useful commands:
+
+```powershell
+agentlocalci why
+agentlocalci doctor --build-image
+agentlocalci check --profile fast
+agentlocalci report --open
+agentlocalci hook install --profile fast
+agentlocalci hook status
+agentlocalci hook remove
+```
+
+The optional pre-push hook is local and opt-in. It will not overwrite a hook that AgentLocalCI does not own.
+
+## Why use this instead of only GitHub Actions?
+
+| Need | AgentLocalCI | GitHub Actions |
+|---|---|---|
+| Routine checks without hosted-runner minutes | Yes—runs on your machine | Private-repository jobs can consume included or billable minutes |
+| Immediate feedback without a hosted queue | Yes | Depends on runner availability |
+| Source and logs remain local | Yes, unless you share the report | Source executes on hosted or self-hosted runner infrastructure |
+| Exact committed tree and offline validation | Built in | Possible, but workflow authors must design it |
+| Pull-request status visible to collaborators | No | Yes |
+| Hosted OS/version matrices | No | Yes |
+| Deployment and release automation | Intentionally no | Yes |
+| Independent verification away from the contributor machine | No | Yes |
+
+AgentLocalCI is strongest as the **first gate**, not as marketing-driven replacement for every hosted workflow:
+
+> Run AgentLocalCI for every local commit or push. Keep a smaller hosted workflow for shared pull-request status, platform matrices, release publishing, and deployment.
+
+See [Why local CI?](docs/why-local-ci.md) and [billing wording](docs/billing.md).
 
 ## Security boundary
 
-Every validation stage uses a fresh container with:
+Every validation stage uses a fresh Linux container with:
 
 - non-root UID/GID `10001:10001`;
 - read-only root filesystem;
 - all Linux capabilities dropped;
 - `no-new-privileges`;
-- no host bind mounts;
-- no Docker socket, devices, ports, credentials, or personal directories;
+- no host repository bind mount;
+- no Docker socket, devices, published ports, credentials, SSH agent, or personal directories;
 - `network=none` during validation;
-- source materialized from an exact-tree Git object pack, not from the host checkout.
+- source materialized from an exact-tree Git object pack, not the host checkout.
 
-When dependencies are required, AgentLocalCI first prepares disposable caches through a trusted IPv4-only HTTPS CONNECT proxy. The proxy accepts only exact machine-policy-approved hostnames on port 443. Validation then uses the prepared cache with networking disabled.
+When npm or Gradle dependencies are needed, a trusted preparation phase uses an exact-hostname HTTPS allowlist. Validation receives a disposable cache and remains offline.
 
-See [docs/security.md](docs/security.md).
+Cleanup requires exact `type + name + owner + run + kind` agreement. Ambiguous resources are retained and turn the run into a cleanup failure rather than being broadly deleted.
 
-## Requirements
+Read [THREAT_MODEL.md](THREAT_MODEL.md) and [docs/security.md](docs/security.md).
 
-- Windows 11 or a currently supported Windows 10 release.
-- PowerShell 7.4 or newer.
-- Git for Windows.
-- Docker Desktop configured for Linux containers.
-- At least 20 GiB free disk by the default machine policy.
+## What automatic detection supports
 
-No GitHub token is required to run CI. The target commit must already exist locally.
+### npm
 
-## Install
+With `package.json` and `package-lock.json`, setup detects only scripts that actually exist among:
 
-From a checked-out AgentLocalCI repository:
+- `lint`
+- `typecheck`, `type-check`, or `check-types`
+- `test` (placeholder “no test specified” scripts are ignored)
+- `build`
 
-```powershell
-pwsh -NoProfile -File .\install.ps1
-agentlocalci doctor --build-image
+The script body is never copied into the CI configuration. AgentLocalCI emits argv such as `npm run lint`, and npm resolves the committed script while validation is offline.
+
+### Gradle
+
+Setup detects committed wrappers at:
+
+- `gradlew`
+- `android/gradlew`
+- `apps/android/gradlew`
+
+It creates `fast` and `standard` profiles using the wrapper. Hardware devices, emulators, signing, and deployment remain declared gaps.
+
+### Other projects
+
+AgentLocalCI creates a clearly marked diagnostic profile rather than falsely claiming acceptance. Edit the generated argv-based stages and commit them.
+
+## Reports
+
+Each run writes:
+
+```text
+runtime/runs/<RUN_ID>/
+  report.json
+  summary.md
+  report.html
+  logs/
 ```
 
-The installer creates a user-local, side-by-side installation under `%LOCALAPPDATA%\AgentLocalCI`. It does not replace or modify another product-specific CI installation.
+The HTML report has no external script, font, image, or network request. JSON remains the machine-readable source of truth. Logs are redacted and bounded before persistence.
 
-## Configure a project
+## macOS status
 
-From the target repository root:
+The controller uses native PowerShell on macOS and a native `linux/arm64` trusted image on Apple Silicon; Intel Macs use `linux/amd64`. Tool downloads are checksum-pinned for both architectures.
 
-```powershell
-agentlocalci init
-```
+macOS support is **beta**, not yet claimed as field-certified on every physical Mac/Docker Desktop combination. Release evidence includes parser/unit tests, Unix installer tests inside the trusted Linux environment, and native ARM64 image builds. See [macOS support](docs/macos.md).
 
-Review and commit `.agentlocalci/pipeline.yml`. The file is JSON-compatible YAML in 0.1; JSON syntax is valid and recommended while the parser remains intentionally small.
-
-Minimal generic example:
-
-```json
-{
-  "schema_version": 1,
-  "project": { "name": "my-project" },
-  "default_profile": "standard",
-  "dependency_hosts": [],
-  "environment": {},
-  "dependencies": {},
-  "profiles": {
-    "standard": {
-      "description": "Local acceptance checks",
-      "acceptance": true,
-      "gaps": ["Deployment and hosted-service tests are outside this profile."],
-      "stages": [
-        {
-          "id": "test",
-          "command": ["pwsh", "-NoLogo", "-NoProfile", "-File", "tests/run.ps1"],
-          "working_directory": ".",
-          "needs": [],
-          "timeout_seconds": 1800
-        }
-      ]
-    }
-  }
-}
-```
-
-Commands are argv arrays. Commit script files and invoke them; command-string interpreter flags such as `bash -c`, `pwsh -Command`, or `cmd /c` are rejected.
-
-## Run one exact commit
+## Advanced exact-target mode
 
 ```powershell
 $sha = (git rev-parse HEAD).Trim()
-agentlocalci run --profile standard --sha $sha
+agentlocalci validate-config --sha $sha
+agentlocalci run --sha $sha --profile standard
 ```
 
-AgentLocalCI rejects `HEAD`, branch names, tags, abbreviated SHAs, uppercase SHAs, missing objects, and an SHA whose object is not a commit.
+Branch names, tags, `HEAD`, abbreviated SHAs, uppercase SHAs, missing objects, and non-commit objects are rejected by the advanced `run` command.
 
-Useful commands:
+## Development and release gates
 
 ```powershell
-agentlocalci status
-agentlocalci report <RUN_ID>
-agentlocalci doctor --build-image
-agentlocalci clean
-agentlocalci clean --images
-agentlocalci service start   # enables the on-demand policy; it does not start a daemon
-agentlocalci service stop    # disables new runs; it does not stop a service
+pwsh -NoProfile -File ./tests/run-unit.ps1
+pwsh -NoProfile -File ./tests/run-docker-integration.ps1
+pwsh -NoProfile -File ./tests/run-adversarial-e2e.ps1
+pwsh -NoProfile -File ./tests/run-installer-integration.ps1
+pwsh -NoProfile -File ./scripts/run-quality.ps1
+pwsh -NoProfile -File ./scripts/secret-scan.ps1 -IncludeHistory
 ```
 
-Exit codes:
+This repository intentionally contains no GitHub Actions workflow and never turns a contributor pull request into a command on a maintainer’s machine.
 
-| Code | Meaning |
-|---:|---|
-| 0 | Acceptance profile passed |
-| 1 | A validation stage failed |
-| 2 | Usage, configuration, or target error |
-| 3 | Controller or infrastructure failure |
-| 4 | Safety policy blocked the run |
-| 5 | Cleanup could not be proven complete |
-| 6 | Diagnostic-only profile completed |
-| 130 | Cancelled |
+## Documentation
 
-## Supported dependency modes
-
-- `npm`: online `npm ci --ignore-scripts` prepares a disposable cache; validation runs offline.
-- `gradle`: a committed Gradle wrapper resolves dependencies into a disposable cache; validation runs offline.
-- no dependency mode: arbitrary committed scripts and executables already present in the trusted image may run with `network=none`.
-
-Examples are under [`examples/`](examples/).
-
-## Trust and cleanup
-
-The controller records container, network, and volume identity as `type + name + owner + run + kind`. Cleanup only acts on a dead or completed run after exact label matching, removes resources in dependency order, and verifies absence after deletion. Ambiguous or unclaimed owner-labelled resources are retained and make cleanup fail closed.
-
-The same Windows user and anyone with Docker daemon access are inside the trusted host boundary. AgentLocalCI does not defend against a malicious host administrator or Docker operator.
-
-## Development
-
-```powershell
-pwsh -NoProfile -File .\tests\run-unit.ps1
-pwsh -NoProfile -File .\tests\run-docker-integration.ps1
-pwsh -NoProfile -File .\tests\run-adversarial-e2e.ps1
-pwsh -NoProfile -File .\tests\run-installer-integration.ps1
-pwsh -NoProfile -File .\scripts\run-quality.ps1
-```
-
-This repository deliberately contains no GitHub Actions workflow. Maintainers run the same exact-commit gate locally and publish the resulting commit, report summary, SBOM, and checksums as release evidence.
-
-## Project documents
-
+- [Installing and upgrading](docs/installing.md)
+- [macOS support](docs/macos.md)
+- [Why local CI?](docs/why-local-ci.md)
 - [Architecture](docs/architecture.md)
 - [Configuration](docs/configuration.md)
-- [Security](docs/security.md)
-- [Threat model](THREAT_MODEL.md)
+- [Reports](docs/reporting.md)
 - [Limitations](docs/limitations.md)
-- [Troubleshooting](docs/troubleshooting.md)
-- [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
 
 ## License
