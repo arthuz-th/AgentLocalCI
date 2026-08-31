@@ -203,7 +203,7 @@ function Assert-AgentLocalCiNoReparseAncestor {
 function Assert-AgentLocalCiPathIsNarrow {
     param([Parameter(Mandatory = $true)][string]$Path)
 
-    $full = Get-AgentLocalCiSafeFullPath -Path $Path
+    $full = Get-AgentLocalCiCanonicalSystemPath -Path (Get-AgentLocalCiSafeFullPath -Path $Path)
     $root = [IO.Path]::GetPathRoot($full)
     if (Test-AgentLocalCiPathEquals $full $root) {
         Throw-AgentLocalCi -Message "AgentLocalCI refuses a filesystem root as a mutation boundary" -ExitCode 4

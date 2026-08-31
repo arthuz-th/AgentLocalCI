@@ -84,7 +84,14 @@ function Get-AgentLocalCiTrustedImage {
         catch { $mustBuild = $true }
     }
     if ($mustBuild) {
-        $arguments = @("image", "build", "--pull=false", "--tag", $build.Tag, "--label", "io.agentlocalci.identity=$($build.Identity)", $build.Directory)
+        $arguments = @(
+            "image", "build",
+            "--pull=false",
+            "--build-arg", "TARGETARCH=$expectedArchitecture",
+            "--tag", $build.Tag,
+            "--label", "io.agentlocalci.identity=$($build.Identity)",
+            $build.Directory
+        )
         Invoke-AgentLocalCiDocker $arguments | Out-Null
     }
     $inspection = ConvertFrom-AgentLocalCiSingleInspection (Invoke-AgentLocalCiDocker @("image", "inspect", $build.Tag)).Text "image"

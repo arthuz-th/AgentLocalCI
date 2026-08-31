@@ -31,6 +31,38 @@ function Test-PathEquals([string]$Left, [string]$Right) {
     return $Left.Equals($Right, (Get-PathComparison))
 }
 
+function Get-CanonicalSystemPath([string]$Path) {
+    $full = [IO.Path]::GetFullPath($Path)
+    if ((Get-HostPlatform) -cne "macos") { return $full }
+
+    $aliases = @(
+        [pscustomobject]@{ Alias = "/var"; Target = "/private/var" },
+        [pscustomobject]@{ Alias = "/tmp"; Target = "/private/tmp" },
+        [pscustomobject]@{ Alias = "/etc"; Target = "/private/etc" }
+    )
+    foreach ($entry in $aliases) {
+        $alias = [string]$entry.Alias
+        $target = [string]$entry.Target
+        $matchesAlias = Test-PathEquals $full $alias
+        $matchesDescendant = $full.StartsWith("$alias/", [StringComparison]::Ordinal)
+        if (-not $matchesAlias -and -not $matchesDescendant) { continue }
+
+        try {
+            $item = Get-Item -LiteralPath $alias -Force -ErrorAction Stop
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) { return $full }
+            $resolved = $item.ResolveLinkTarget($true)
+            if ($null -eq $resolved) { return $full }
+            $resolvedPath = [IO.Path]::GetFullPath($resolved.FullName).TrimEnd([char[]]@('\', '/'))
+            if (-not (Test-PathEquals $resolvedPath $target)) { return $full }
+        }
+        catch { return $full }
+
+        $suffix = if ($matchesAlias) { "" } else { $full.Substring($alias.Length) }
+        return "$target$suffix"
+    }
+    return $full
+}
+
 function Get-UserHome {
     $value = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
     if ([string]::IsNullOrWhiteSpace($value)) { $value = [Environment]::GetEnvironmentVariable("HOME", "Process") }
@@ -78,7 +110,7 @@ function Assert-NoReparseAncestor([string]$Path) {
 }
 
 function Get-SafeRoot([string]$Path) {
-    $full = [IO.Path]::GetFullPath($Path)
+    $full = Get-CanonicalSystemPath ([IO.Path]::GetFullPath($Path))
     $root = [IO.Path]::GetPathRoot($full)
     if (Test-PathEquals $full $root) { throw "AgentLocalCI refuses a filesystem root: $full" }
     $relative = $full.Substring($root.Length).Trim([char[]]@('\', '/'))

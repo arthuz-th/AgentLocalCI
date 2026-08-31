@@ -27,6 +27,44 @@ function Test-AgentLocalCiPathEquals {
     return $Left.Equals($Right, (Get-AgentLocalCiPathComparison))
 }
 
+function Get-AgentLocalCiCanonicalSystemPath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $full = [IO.Path]::GetFullPath($Path)
+    if ((Get-AgentLocalCiHostPlatform) -cne "macos") { return $full }
+
+    # macOS exposes these Apple-owned root aliases as symbolic links. They are
+    # stable filesystem spellings rather than project-controlled indirection.
+    # Resolve only this verified allowlist; every other symbolic-link or
+    # reparse ancestor remains rejected by Assert-AgentLocalCiNoReparseAncestor.
+    $aliases = @(
+        [pscustomobject]@{ Alias = "/var"; Target = "/private/var" },
+        [pscustomobject]@{ Alias = "/tmp"; Target = "/private/tmp" },
+        [pscustomobject]@{ Alias = "/etc"; Target = "/private/etc" }
+    )
+    foreach ($entry in $aliases) {
+        $alias = [string]$entry.Alias
+        $target = [string]$entry.Target
+        $matchesAlias = Test-AgentLocalCiPathEquals $full $alias
+        $matchesDescendant = $full.StartsWith("$alias/", [StringComparison]::Ordinal)
+        if (-not $matchesAlias -and -not $matchesDescendant) { continue }
+
+        try {
+            $item = Get-Item -LiteralPath $alias -Force -ErrorAction Stop
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) { return $full }
+            $resolved = $item.ResolveLinkTarget($true)
+            if ($null -eq $resolved) { return $full }
+            $resolvedPath = [IO.Path]::GetFullPath($resolved.FullName).TrimEnd([char[]]@('\', '/'))
+            if (-not (Test-AgentLocalCiPathEquals $resolvedPath $target)) { return $full }
+        }
+        catch { return $full }
+
+        $suffix = if ($matchesAlias) { "" } else { $full.Substring($alias.Length) }
+        return "$target$suffix"
+    }
+    return $full
+}
+
 function Get-AgentLocalCiNullDevice {
     if ((Get-AgentLocalCiHostPlatform) -ceq "windows") { return "NUL" }
     return "/dev/null"
