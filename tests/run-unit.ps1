@@ -265,6 +265,23 @@ Test-Case "trusted runner exits have distinct safety and infrastructure classes"
     Assert-Equal (& $module { param($x) Get-AgentLocalCiStageStatus $x } $infrastructure) 'InfrastructureFailed' "infrastructure status"
 }
 
+Test-Case "repository root accepts Git-canonical aliases and rejects subdirectories" {
+    $root = Join-Path ([IO.Path]::GetTempPath()) ("agentlocalci-root-canonical-" + [Guid]::NewGuid().ToString('N'))
+    try {
+        & git init -q -b main $root
+        $expected = (& git -C $root rev-parse --show-toplevel).Trim()
+        $actual = & $module { param($r) Get-AgentLocalCiRepositoryRoot $r } $root
+        Assert-Equal $actual $expected "repository root was not normalized to Git's canonical top level"
+
+        $child = Join-Path $root 'nested'
+        [IO.Directory]::CreateDirectory($child) | Out-Null
+        $blocked = $false
+        try { & $module { param($r) Get-AgentLocalCiRepositoryRoot $r | Out-Null } $child } catch { $blocked = $true }
+        Assert-True $blocked "repository subdirectory was accepted as the worktree root"
+    }
+    finally { if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force } }
+}
+
 Test-Case "Gradle init starter includes wrapper redirect hosts" {
     $requiredHosts = @('services.gradle.org', 'github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com')
     if ($false) {
@@ -290,6 +307,31 @@ Test-Case "Gradle init starter includes wrapper redirect hosts" {
         foreach ($path in @($root, $temporaryHome)) {
             if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force }
         }
+    }
+}
+
+Test-Case "macOS system aliases canonicalize narrowly while arbitrary links remain blocked" {
+    if (-not $IsMacOS) { return }
+
+    $lexical = Join-Path ([IO.Path]::GetTempPath()) ("agentlocalci-alias-" + [Guid]::NewGuid().ToString('N'))
+    $canonical = & $module { param($p) Assert-AgentLocalCiPathIsNarrow $p } $lexical
+    if ($lexical.StartsWith('/var/', [StringComparison]::Ordinal)) {
+        Assert-True ($canonical.StartsWith('/private/var/', [StringComparison]::Ordinal)) "trusted /var alias was not canonicalized"
+    }
+
+    $base = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)) (".agentlocalci-link-test-" + [Guid]::NewGuid().ToString('N'))
+    $target = Join-Path $base 'target'
+    $link = Join-Path $base 'link'
+    try {
+        [IO.Directory]::CreateDirectory($target) | Out-Null
+        New-Item -ItemType SymbolicLink -Path $link -Target $target | Out-Null
+        $blocked = $false
+        try { & $module { param($p) Assert-AgentLocalCiPathIsNarrow $p | Out-Null } (Join-Path $link 'nested') } catch { $blocked = $true }
+        Assert-True $blocked "project-controlled symbolic-link ancestor was accepted"
+    }
+    finally {
+        if (Test-Path -LiteralPath $link) { Remove-Item -LiteralPath $link -Force }
+        if (Test-Path -LiteralPath $base) { Remove-Item -LiteralPath $base -Recurse -Force }
     }
 }
 

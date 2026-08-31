@@ -5,11 +5,33 @@ function Get-AgentLocalCiRepositoryRoot {
     if (-not (Test-Path -LiteralPath $full -PathType Container)) { Throw-AgentLocalCi -Message "Repository does not exist: $full" -ExitCode 2 }
     $git = Get-AgentLocalCiGitPath
     $nullDevice = Get-AgentLocalCiNullDevice
-    $probe = Invoke-AgentLocalCiNative -FilePath $git -Arguments @("--no-pager", "--no-replace-objects", "-c", "core.hooksPath=$nullDevice", "-c", "core.attributesFile=$nullDevice", "-C", $full, "rev-parse", "--show-toplevel") -AllowFailure -Environment @{ GIT_CONFIG_NOSYSTEM = "1"; GIT_CONFIG_GLOBAL = $nullDevice; GIT_TERMINAL_PROMPT = "0"; GIT_OPTIONAL_LOCKS = "0" } -RemoveEnvironmentPrefixes @("GIT_")
-    if ($probe.ExitCode -ne 0) { Throw-AgentLocalCi -Message "RepositoryRoot is not a Git worktree: $full" -ExitCode 2 }
-    $top = Get-AgentLocalCiSafeFullPath ($probe.Lines | Select-Object -First 1)
-    if (-not (Test-AgentLocalCiPathEquals $top $full)) { Throw-AgentLocalCi -Message "RepositoryRoot must be the Git worktree root: $top" -ExitCode 2 }
-    return $full
+    $probeArguments = @(
+        "--no-pager", "--no-replace-objects",
+        "-c", "core.hooksPath=$nullDevice",
+        "-c", "core.attributesFile=$nullDevice",
+        "-C", $full,
+        "rev-parse"
+    )
+    $probeEnvironment = @{
+        GIT_CONFIG_NOSYSTEM = "1"
+        GIT_CONFIG_GLOBAL = $nullDevice
+        GIT_TERMINAL_PROMPT = "0"
+        GIT_OPTIONAL_LOCKS = "0"
+    }
+    $topProbe = Invoke-AgentLocalCiNative -FilePath $git -Arguments ($probeArguments + "--show-toplevel") -AllowFailure -Environment $probeEnvironment -RemoveEnvironmentPrefixes @("GIT_")
+    if ($topProbe.ExitCode -ne 0) { Throw-AgentLocalCi -Message "RepositoryRoot is not a Git worktree: $full" -ExitCode 2 }
+    $top = Get-AgentLocalCiSafeFullPath ($topProbe.Lines | Select-Object -First 1)
+
+    # Git resolves filesystem aliases such as macOS /var -> /private/var while
+    # System.IO intentionally preserves the lexical path. Ask Git whether the
+    # supplied directory is the worktree root instead of comparing those two
+    # spellings. A non-empty prefix still proves that a repository subdirectory
+    # was supplied and remains rejected.
+    $prefixProbe = Invoke-AgentLocalCiNative -FilePath $git -Arguments ($probeArguments + "--show-prefix") -AllowFailure -Environment $probeEnvironment -RemoveEnvironmentPrefixes @("GIT_")
+    if ($prefixProbe.ExitCode -ne 0) { Throw-AgentLocalCi -Message "RepositoryRoot is not a Git worktree: $full" -ExitCode 2 }
+    $prefix = [string]($prefixProbe.Lines | Select-Object -First 1)
+    if (-not [string]::IsNullOrEmpty($prefix)) { Throw-AgentLocalCi -Message "RepositoryRoot must be the Git worktree root: $top" -ExitCode 2 }
+    return $top
 }
 
 function Get-AgentLocalCiSourceAssets {
