@@ -269,7 +269,7 @@ Test-Case "repository root accepts Git-canonical aliases and rejects subdirector
     $root = Join-Path ([IO.Path]::GetTempPath()) ("agentlocalci-root-canonical-" + [Guid]::NewGuid().ToString('N'))
     try {
         & git init -q -b main $root
-        $expected = (& git -C $root rev-parse --show-toplevel).Trim()
+        $expected = [IO.Path]::GetFullPath((& git -C $root rev-parse --show-toplevel).Trim())
         $actual = & $module { param($r) Get-AgentLocalCiRepositoryRoot $r } $root
         Assert-Equal $actual $expected "repository root was not normalized to Git's canonical top level"
 
