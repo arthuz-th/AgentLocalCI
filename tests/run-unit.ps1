@@ -378,6 +378,12 @@ Test-Case "trusted image definition is native multi-architecture and checksum pi
         'POWERSHELL_SHA256_ARM64=d4ef2382fa452f2ccbdb48a01adbbce9ed64954872123970c16be6d086d1224b',
         'io.agentlocalci.arch'
     )) { Assert-True ($dockerfile.Contains($required, [StringComparison]::Ordinal)) "Dockerfile omitted $required" }
+    $trustedImageDefinition = & $module {
+        (Get-Command Get-AgentLocalCiTrustedImage).ScriptBlock.ToString()
+    }
+    Assert-True (
+        $trustedImageDefinition.Contains('"--build-arg", "TARGETARCH=$expectedArchitecture"', [StringComparison]::Ordinal)
+    ) "trusted image build does not pass the verified Docker architecture to legacy builders"
 }
 
 Test-Case "beginner why command is balanced rather than anti-hosted-CI marketing" {
