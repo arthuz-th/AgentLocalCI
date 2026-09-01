@@ -16,6 +16,27 @@ function Get-AgentLocalCiDockerArchitecture {
     return $architecture
 }
 
+function Resolve-AgentLocalCiDockerCpuLimit {
+    param(
+        [Parameter(Mandatory = $true)][double]$Requested,
+        [Parameter(Mandatory = $true)][int]$Available
+    )
+    if (-not [double]::IsFinite($Requested) -or $Requested -lt 0.5 -or $Available -lt 1) {
+        Throw-AgentLocalCi -Message "Docker CPU limit inputs are invalid" -ExitCode 3
+    }
+    return [Math]::Max(0.5, [Math]::Min($Requested, [double]$Available))
+}
+
+function Get-AgentLocalCiDockerCpuLimit {
+    param([Parameter(Mandatory = $true)][double]$Requested)
+    $value = (Invoke-AgentLocalCiDocker @("info", "--format", "{{.NCPU}}" )).Text.Trim()
+    $available = 0
+    if (-not [int]::TryParse($value, [ref]$available) -or $available -lt 1) {
+        Throw-AgentLocalCi -Message "Docker returned an invalid CPU count" -ExitCode 3
+    }
+    return Resolve-AgentLocalCiDockerCpuLimit $Requested $available
+}
+
 function ConvertFrom-AgentLocalCiSingleInspection {
     param(
         [Parameter(Mandatory = $true)][string]$Text,
@@ -159,12 +180,18 @@ function New-AgentLocalCiContainerBaseArguments {
         [Parameter(Mandatory = $true)][string]$Network
     )
     $resources = $Context.Policy.resources
+    $cpuLimit = if ($null -ne $Context.PSObject.Properties["DockerCpuCount"]) {
+        Resolve-AgentLocalCiDockerCpuLimit ([double]$resources.cpu_limit) ([int]$Context.DockerCpuCount)
+    }
+    else {
+        Get-AgentLocalCiDockerCpuLimit ([double]$resources.cpu_limit)
+    }
     return @(
         "container", "create", "--name", $Name,
         "--network", $Network,
         "--user", $script:AgentLocalCiContainerUid,
         "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
-        "--cpus", ([string]$resources.cpu_limit),
+        "--cpus", ([string]$cpuLimit),
         "--memory", ([string]$resources.memory_limit), "--memory-swap", ([string]$resources.memory_limit),
         "--pids-limit", ([string]$resources.pids_limit),
         "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=512m,uid=10001,gid=10001,mode=1777",
