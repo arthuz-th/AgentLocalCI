@@ -129,9 +129,29 @@ function Get-AgentLocalCiRecommendedMemoryGiB {
 
 function Get-AgentLocalCiFreeDiskBytes {
     param([Parameter(Mandatory = $true)][string]$Path)
-    $root = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($Path))
-    if ([string]::IsNullOrWhiteSpace($root)) { Throw-AgentLocalCi -Message "Cannot determine the filesystem root for free-space inspection" -ExitCode 3 }
-    return [int64]([IO.DriveInfo]::new($root).AvailableFreeSpace)
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    if (-not (Test-Path -LiteralPath $fullPath)) {
+        Throw-AgentLocalCi -Message "Cannot inspect free space for a missing path" -ExitCode 3
+    }
+    if ((Get-AgentLocalCiHostPlatform) -eq "windows") {
+        $root = [IO.Path]::GetPathRoot($fullPath)
+        if ([string]::IsNullOrWhiteSpace($root)) {
+            Throw-AgentLocalCi -Message "Cannot determine the filesystem root for free-space inspection" -ExitCode 3
+        }
+        return [int64]([IO.DriveInfo]::new($root).AvailableFreeSpace)
+    }
+
+    $df = Get-AgentLocalCiApplicationPath -Names @("/bin/df", "/usr/bin/df", "df") -Purpose "Unix disk-space inspection"
+    $result = Invoke-AgentLocalCiNative -FilePath $df -Arguments @("-Pk", $fullPath)
+    $line = @($result.Lines | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Last 1)
+    if ($line.Count -ne 1 -or $line[0] -cnotmatch '^\S+\s+\d+\s+\d+\s+(\d+)\s+\d+%\s+.+$') {
+        Throw-AgentLocalCi -Message "Unix disk-space inspection returned an invalid result" -ExitCode 3
+    }
+    $availableKiB = 0L
+    if (-not [int64]::TryParse($Matches[1], [ref]$availableKiB) -or $availableKiB -lt 0) {
+        Throw-AgentLocalCi -Message "Unix disk-space inspection returned an invalid available-byte count" -ExitCode 3
+    }
+    return [int64]($availableKiB * 1KB)
 }
 
 function Open-AgentLocalCiPath {

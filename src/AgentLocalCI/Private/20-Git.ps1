@@ -25,6 +25,33 @@ function Invoke-AgentLocalCiGit {
     } -RemoveEnvironmentPrefixes @("GIT_", "SSH_ASKPASS")
 }
 
+function Invoke-AgentLocalCiGitToFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][string]$StandardOutputPath,
+        [AllowNull()][string]$StandardInputText
+    )
+    $git = Get-AgentLocalCiGitPath
+    $nullDevice = Get-AgentLocalCiNullDevice
+    $base = @(
+        "--no-pager", "--no-replace-objects",
+        "-c", "core.hooksPath=$nullDevice",
+        "-c", "core.attributesFile=$nullDevice",
+        "-c", "core.fsmonitor=false",
+        "-c", "credential.helper=",
+        "-C", $RepositoryRoot
+    )
+    return Invoke-AgentLocalCiNativeToFile -FilePath $git -Arguments @($base + $Arguments) -StandardOutputPath $StandardOutputPath -StandardInputText $StandardInputText -Environment @{
+        GIT_CONFIG_NOSYSTEM = "1"
+        GIT_CONFIG_GLOBAL = $nullDevice
+        GIT_TERMINAL_PROMPT = "0"
+        GIT_OPTIONAL_LOCKS = "0"
+        GIT_ASKPASS = ""
+        SSH_ASKPASS = ""
+    } -RemoveEnvironmentPrefixes @("GIT_", "SSH_ASKPASS")
+}
+
 function Resolve-AgentLocalCiCommit {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
@@ -106,14 +133,18 @@ function New-AgentLocalCiProvenancePack {
     }
     $packRoot = Join-Path $RunDirectory "provenance"
     [IO.Directory]::CreateDirectory($packRoot) | Out-Null
-    $prefix = Join-Path $packRoot "exact-tree"
+    $packPath = Join-Path $packRoot "exact-tree.pack"
     $inputText = ((@($objects) | Sort-Object) -join "`n") + "`n"
-    $pack = Invoke-AgentLocalCiGit $Context.RepositoryRoot @("pack-objects", "--compression=9", $prefix) -StandardInputText $inputText
-    $packId = ($pack.Lines | Select-Object -Last 1).Trim()
-    if ($packId -cnotmatch '^[0-9a-f]{40}$') { Throw-AgentLocalCi -Message "Git pack-objects returned an invalid identity" -ExitCode 3 }
-    $packPath = "$prefix-$packId.pack"
-    if (-not (Test-Path -LiteralPath $packPath -PathType Leaf)) { Throw-AgentLocalCi -Message "Exact-tree pack was not created" -ExitCode 3 }
+    $pack = Invoke-AgentLocalCiGitToFile $Context.RepositoryRoot @(
+        "pack-objects", "--compression=9", "--stdout"
+    ) -StandardOutputPath $packPath -StandardInputText $inputText
+    if ($pack.BytesWritten -le 0 -or
+        -not (Test-Path -LiteralPath $packPath -PathType Leaf)) {
+        Throw-AgentLocalCi -Message "Exact-tree pack was not created" -ExitCode 3
+    }
     $indexResult = Invoke-AgentLocalCiNative -FilePath (Get-AgentLocalCiGitPath) -Arguments @("index-pack", $packPath)
+    $packId = ($indexResult.Lines | Select-Object -Last 1).Trim()
+    if ($packId -cnotmatch '^[0-9a-f]{40}$') { Throw-AgentLocalCi -Message "Git index-pack returned an invalid identity" -ExitCode 3 }
     $indexPath = $packPath -replace '\.pack$', '.idx'
     if (-not (Test-Path -LiteralPath $indexPath -PathType Leaf)) { Throw-AgentLocalCi -Message "Exact-tree pack index was not created" -ExitCode 3 }
     $verify = Invoke-AgentLocalCiNative -FilePath (Get-AgentLocalCiGitPath) -Arguments @("verify-pack", "-v", $indexPath)

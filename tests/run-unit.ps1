@@ -119,7 +119,8 @@ Test-Case "pipeline validator rejects shell property and secret environment name
 
 Test-Case "container arguments enforce unprivileged read-only offline shape" {
     $policy = & $module { New-AgentLocalCiDefaultPolicy }
-    $context = [pscustomobject]@{ Policy = $policy }
+    $policy.resources.cpu_limit = 6
+    $context = [pscustomobject]@{ Policy = $policy; DockerCpuCount = 4 }
     $args = & $module { param($c) New-AgentLocalCiContainerBaseArguments $c 'alc-123456789012-test' '20260827-123456789-123456789012' 'test' 'none' } $context
     $joined = $args -join ' '
     Assert-True ($joined -match '--user 10001:10001') "UID missing"
@@ -127,7 +128,10 @@ Test-Case "container arguments enforce unprivileged read-only offline shape" {
     Assert-True ($joined -match '--cap-drop ALL') "cap drop missing"
     Assert-True ($joined -match '--security-opt no-new-privileges:true') "no-new-privileges missing"
     Assert-True ($joined -match '--network none') "network none missing"
+    Assert-True ($joined -match '--cpus 4(?:\.0)?(?:\s|$)') "CPU limit was not clamped to the Docker daemon"
     Assert-True ($joined -notmatch '--privileged|type=bind|docker\.sock') "unsafe option present"
+    Assert-Equal (& $module { Resolve-AgentLocalCiDockerCpuLimit 2.5 4 }) 2.5 "requested CPU limit"
+    Assert-Equal (& $module { Resolve-AgentLocalCiDockerCpuLimit 6 4 }) 4 "daemon CPU clamp"
 }
 
 Test-Case "exact revision rejects names abbreviations and uppercase" {
@@ -168,6 +172,10 @@ Test-Case "provenance pack contains exact tree but not parent commit" {
         $context = [pscustomobject]@{ RepositoryRoot = $root }
         $pack = & $module { param($c,$s,$d) New-AgentLocalCiProvenancePack $c $s $d } $context $sha $scratch
         Assert-True (Test-Path -LiteralPath $pack.Path) "pack missing"
+        Assert-Equal $pack.Path (Join-Path $scratch 'provenance/exact-tree.pack') "pack output path"
+        Assert-Equal $pack.IndexPath (Join-Path $scratch 'provenance/exact-tree.idx') "pack index path"
+        Assert-True ((Get-Item -LiteralPath $pack.Path).Length -gt 0) "pack was empty"
+        Assert-True ($pack.PackSha256 -cmatch '^[0-9a-f]{64}$') "pack SHA-256"
         Assert-True (-not [bool]$pack.HistoryIncluded) "history flag"
         $verify = & git verify-pack -v $pack.IndexPath | Out-String
         Assert-True ($verify -notmatch [Regex]::Escape($parent)) "parent commit leaked into pack"
@@ -218,6 +226,27 @@ Test-Case "path containment handles a filesystem root without doubled separator"
     $root = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath([IO.Path]::GetTempPath()))
     $child = Join-Path $root 'agentlocalci-contained'
     Assert-True (& $module { param($c,$r) Test-AgentLocalCiPathContained $c $r } $child $root) "filesystem-root containment failed"
+}
+
+Test-Case "free disk inspection follows the target Unix mount" {
+    $candidates = @([IO.Path]::GetTempPath(), $PSScriptRoot)
+    if (-not $IsWindows -and (Test-Path -LiteralPath '/Volumes/TheDooXcodeAPFS' -PathType Container)) {
+        $candidates += '/Volumes/TheDooXcodeAPFS'
+    }
+    foreach ($candidate in $candidates | Select-Object -Unique) {
+        $bytes = & $module { param($p) Get-AgentLocalCiFreeDiskBytes $p } $candidate
+        Assert-True ($bytes -gt 0) "free disk bytes were not positive for '$candidate'"
+        if (-not $IsWindows) {
+            $availableKiB = [int64]((& /bin/df -Pk $candidate | Select-Object -Last 1) -split '\s+')[3]
+            Assert-True ([Math]::Abs($bytes - ($availableKiB * 1KB)) -lt 64MB) "free disk inspection did not follow '$candidate'"
+        }
+    }
+    $blocked = $false
+    try {
+        & $module { param($p) Get-AgentLocalCiFreeDiskBytes $p } (Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString('N'))) | Out-Null
+    }
+    catch { $blocked = $true }
+    Assert-True $blocked "missing free-disk path was accepted"
 }
 
 Test-Case "Docker network gateway parsing tolerates omitted fields" {
